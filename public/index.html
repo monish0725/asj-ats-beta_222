@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ASJ ATS Beta</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="appShell" class="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <strong>ASJ Recruitment ATS</strong>
+          <span>AI hiring workspace</span>
+        </div>
+      </div>
+      <div class="nav-group">
+        <span>Recruitment</span>
+        <button class="nav active" data-view="dashboard"><span>DB</span>Dashboard</button>
+        <button class="nav" data-view="inbox"><span>RM</span>Resume Management</button>
+        <button class="nav" data-view="candidates"><span>CA</span>Candidates</button>
+        <button class="nav" data-view="jobs"><span>JB</span>Jobs</button>
+        <button class="nav" data-view="pipeline"><span>PL</span>Pipeline</button>
+        <button class="nav" data-view="outreach"><span>OR</span>Outreach</button>
+      </div>
+      <div class="nav-group">
+        <span>Intelligence</span>
+        <button class="nav" data-view="reports"><span>RP</span>Reports</button>
+        <button class="nav" data-view="compliance"><span>CP</span>Compliance</button>
+        <button class="nav" data-view="users"><span>US</span>Users</button>
+        <button class="nav" data-view="ai"><span>AI</span>ATS Intelligence</button>
+        <button class="nav" data-view="clients"><span>SS</span>System Status</button>
+      </div>
+    </aside>
+
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Public beta</p>
+          <h1 id="pageTitle">Dashboard</h1>
+        </div>
+        <div class="top-actions">
+          <label class="search-control global-search-control">
+            <input id="search" placeholder='Search candidates, jobs, skills, or Boolean...' />
+            <button class="clear-search" data-clear-input="search" type="button" title="Clear search">×</button>
+          </label>
+          <button id="syncBtn" class="primary parse-action" data-role-restricted="inbox"><span class="parse-icon" aria-hidden="true"></span>Parse Resumes</button>
+          <button class="user-chip" id="userChip" type="button" title="Sign out">
+            <strong id="userChipInitials">A</strong>
+            <span id="userChipRole">Admin</span>
+          </button>
+        </div>
+      </header>
+      <section class="ai-strip">
+        <div>
+          <strong id="aiStripTitle">AI, ATS Intelligence</strong>
+          <p id="aiStripText">AI recommendations will appear here as candidates, jobs, and resumes change.</p>
+        </div>
+        <button id="pageAiBtn" class="secondary">Generate Page Brief</button>
+      </section>
+
+      <section id="dashboard" class="view active">
+        <div id="kpis" class="kpi-grid"></div>
+        <div class="quick-actions">
+          <button data-jump-view="inbox">Upload Resume</button>
+          <button data-jump-view="jobs">Create Job</button>
+          <button data-jump-view="pipeline">Review Pipeline</button>
+          <button data-jump-view="reports">View Reports</button>
+        </div>
+        <div class="split">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Hiring Pipeline</h2>
+              <span>Live application stages</span>
+            </div>
+            <div id="stageBars" class="stage-bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Recent Activity</h2>
+              <span>Audit trail</span>
+            </div>
+            <div id="activities" class="activity-list"></div>
+          </section>
+        </div>
+        <div class="split">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Top Matching Profiles</h2>
+              <span>Live ATS ranking</span>
+            </div>
+            <div id="dashboardMatches" class="rank-list"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Resume Inbox Health</h2>
+              <span>Upload, parse, review</span>
+            </div>
+            <div id="inboxHealth" class="health-grid"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="inbox" class="view">
+        <div class="panel resume-toolbar-panel">
+          <div class="panel-head row">
+            <div>
+              <h2>Resume Management</h2>
+              <span>Upload Resume | Bulk Import Folder | Parse Status</span>
+            </div>
+            <div class="panel-actions">
+              <button id="reparseBtn" class="secondary" data-role-restricted="inbox">Re-read Uploaded Files</button>
+              <button id="syncBtn2" class="primary parse-action" data-role-restricted="inbox"><span class="parse-icon" aria-hidden="true"></span>Parse & Import</button>
+            </div>
+          </div>
+          <div class="resume-toolbar">
+            <div>
+              <label>Upload Resume</label>
+              <input id="resumeFile" type="file" multiple accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.tif,.tiff,.gif,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*" />
+            </div>
+            <div>
+              <label>Duplicate Handling</label>
+              <select id="duplicateAction">
+                <option value="skip">Skip exact duplicates</option>
+                <option value="rename">Save updated duplicates as Name 1, Name 2</option>
+              </select>
+            </div>
+            <div>
+              <label>Bulk Import Folder</label>
+              <input id="folderPath" placeholder="/Users/monishshanmugam/Documents/ASJ/resumes" />
+            </div>
+            <div class="toolbar-actions">
+              <button id="uploadResume" class="primary" data-role-restricted="inbox">Upload</button>
+              <button id="importFolder" class="secondary" data-role-restricted="inbox">Import Folder</button>
+            </div>
+            <textarea id="uploadText" rows="2" placeholder="Optional corrected resume text for a single scanned/image resume."></textarea>
+          </div>
+          <div id="parseStatus" class="parse-status"></div>
+          <div id="parsingDashboard" class="parsing-dashboard"></div>
+          <div id="bulkResult" class="import-result"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head row">
+            <div>
+              <h2>Resume Inbox</h2>
+              <span>Review parsed names, update text, delete resumes, and open previews</span>
+            </div>
+          </div>
+          <div id="resumeInbox" class="ats-table-host"></div>
+        </div>
+      </section>
+
+      <section id="candidates" class="view">
+        <div class="panel">
+          <div class="panel-head row">
+            <div>
+              <h2>Candidate Management</h2>
+              <span>Recruiter CRM workspace for search, filters, bulk actions, and profile review</span>
+            </div>
+            <button id="exportCandidates" class="secondary" data-role-restricted="candidates">Export</button>
+          </div>
+          <div class="candidate-crm-toolbar">
+            <label class="candidate-search-field">
+              <span>Search Candidate / Boolean Search</span>
+              <span class="search-control">
+                <input id="candidateSearch" placeholder='Name, role, skill, location, Python AND SQL, "Machine Learning"...' />
+                <button class="clear-search" data-clear-input="candidateSearch" type="button" title="Clear search">×</button>
+              </span>
+            </label>
+            <div class="candidate-filter-row">
+              <select id="candidateJobFilter"><option value="">Job</option></select>
+              <select id="candidateStageFilter">
+                <option value="">Stage</option>
+                <option value="Applied">Applied Candidates</option>
+                <option value="Matched Candidates">Matched Candidates</option>
+                <option value="Interview">Interview</option>
+                <option value="Awaiting Decision">Awaiting Decision</option>
+                <option value="Final Decision">Final Decision</option>
+              </select>
+              <select id="candidateExperienceFilter">
+                <option value="">Experience</option>
+                <option value="0">Any experience</option>
+                <option value="2">2+ years</option>
+                <option value="5">5+ years</option>
+                <option value="8">8+ years</option>
+              </select>
+              <select id="candidateOpenFilter">
+                <option value="">Open To Work</option>
+                <option value="yes">Open To Work</option>
+                <option value="no">Not listed</option>
+              </select>
+              <select id="candidateBulkAction" data-role-restricted="candidates">
+                <option value="">Bulk Actions</option>
+                <option value="email">Email selected</option>
+                <option value="delete">Delete selected</option>
+              </select>
+            </div>
+          </div>
+          <div id="candidateRows" class="ats-data-grid"></div>
+        </div>
+      </section>
+
+      <section id="jobs" class="view">
+        <details class="panel job-create-details">
+          <summary>
+            <span>
+              <strong>Create Job</strong>
+              <em>Add roles manually or extract from a JD file, pasted text, or URL</em>
+            </span>
+            <span class="badge">Open form</span>
+          </summary>
+          <div class="job-form">
+            <input id="jobTitle" placeholder="Job title" />
+            <input id="jobDepartment" placeholder="Department" />
+            <input id="jobLocation" placeholder="Location" />
+            <select id="jobType">
+              <option>Full time</option>
+              <option>Contract</option>
+              <option>Part time</option>
+            </select>
+            <select id="jobStatus">
+              <option value="open">Open</option>
+              <option value="draft">Draft</option>
+              <option value="closed">Closed</option>
+            </select>
+            <select id="jobPriority">
+              <option value="High">High priority</option>
+              <option value="Medium" selected>Medium priority</option>
+              <option value="Low">Low priority</option>
+            </select>
+            <select id="jobClearance">
+              <option value="No clearance">No clearance</option>
+              <option value="Baseline">Baseline</option>
+              <option value="Clearance">Clearance</option>
+            </select>
+            <input id="jobStartDate" type="date" />
+            <input id="jobClosingDate" type="date" />
+            <input id="jobSkills" placeholder="Skills: Java, Spring Boot, AWS" />
+            <textarea id="jobDescription" rows="3" placeholder="Job description"></textarea>
+            <div class="extract-grid">
+              <input id="jobFile" type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+              <input id="jobUrl" placeholder="https://company.com/careers/job-posting" />
+              <textarea id="jobRawText" rows="3" placeholder="Upload JD, paste JD, or add a job URL, then extract into the form"></textarea>
+            </div>
+            <div class="job-form-actions">
+              <button id="extractJob" class="secondary" type="button" data-role-restricted="jobs">Extract JD</button>
+              <button id="createJob" class="primary" data-role-restricted="jobs">Add Job</button>
+              <button id="cancelJobEdit" class="secondary" type="button" hidden>Cancel Edit</button>
+            </div>
+            <div id="jobExtractResult" class="import-result"></div>
+          </div>
+        </details>
+        <div id="jobCards" class="job-grid"></div>
+      </section>
+
+      <section id="pipeline" class="view">
+        <div class="panel">
+          <div class="panel-head row">
+            <div>
+              <h2>Job Pipeline</h2>
+              <span>Choose one job, then drag candidates between stages</span>
+            </div>
+            <div class="pipeline-filters">
+              <select id="pipelineJob"></select>
+              <label class="search-control">
+                <input id="pipelineSearch" placeholder='Search candidate, role, skill, or Python AND SQL...' />
+                <button class="clear-search" data-clear-input="pipelineSearch" type="button" title="Clear search">×</button>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div id="pipelineBoard" class="kanban"></div>
+      </section>
+
+      <section id="outreach" class="view">
+        <div class="panel">
+          <div class="panel-head row">
+            <div>
+              <h2>Outreach Campaign Center</h2>
+              <span>Individual email, selected-candidate bulk outreach, BCC campaigns, follow-ups, and communication history</span>
+            </div>
+            <div class="panel-actions">
+              <select id="outreachJob"></select>
+              <select id="outreachType">
+                <option value="individual">Individual Email</option>
+                <option value="bulk">Bulk Email</option>
+                <option value="bcc">BCC Campaign</option>
+                <option value="follow-up">Follow-Up</option>
+                <option value="interview">Interview Invite</option>
+              </select>
+              <button id="sendOutreach" class="primary" data-role-restricted="outreach">Send Selected</button>
+            </div>
+          </div>
+          <!-- Individual mode -->
+          <div id="outreachIndividualSection" class="outreach-type-section visible">
+            <div class="outreach-recipient-grid">
+              <div>
+                <label for="outreachCandidate">Individual candidate</label>
+                <select id="outreachCandidate"></select>
+              </div>
+              <div>
+                <label for="outreachCandidateSearch">Or type a candidate name</label>
+                <span class="search-control" style="width:100%">
+                  <input id="outreachCandidateSearch" list="candidateNameList" placeholder="Start typing candidate name" style="width:100%" />
+                  <button class="clear-search" data-clear-input="outreachCandidateSearch" type="button" title="Clear">×</button>
+                </span>
+                <datalist id="candidateNameList"></datalist>
+              </div>
+              <div class="recipient-summary">
+                <strong>Recipients</strong>
+                <span id="outreachRecipients">Select candidates in the Candidates tab or choose one here.</span>
+              </div>
+            </div>
+          </div>
+          <!-- Bulk / BCC / Follow-up / Interview mode -->
+          <div id="outreachBulkSection" class="outreach-type-section">
+            <div class="recipient-summary" style="margin-bottom:10px">
+              <strong id="bulkRecipientLabel">Bulk recipients</strong>
+              <span id="outreachRecipientsBulk">Select candidates below or switch to Candidates tab and select there.</span>
+            </div>
+            <div class="bulk-select-actions">
+              <button id="outreachSelectAll" type="button">Select all</button>
+              <button id="outreachClearAll" type="button">Clear all</button>
+              <span id="outreachBulkCount" class="badge" style="margin-left:4px">0 selected</span>
+            </div>
+            <div id="outreachCandidateList"></div>
+          </div>
+          <div class="outreach-composer">
+            <input id="outreachSubject" placeholder="Subject" />
+            <textarea id="outreachMessage" rows="7" placeholder="Write or generate a professional candidate message..."></textarea>
+            <div class="composer-actions">
+              <button id="generateOutreach" class="secondary" data-role-restricted="outreach">Generate AI Message</button>
+              <span class="muted">Use {{name}} for bulk personalization.</span>
+            </div>
+          </div>
+        </div>
+        <div class="split">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Top Outreach Targets</h2>
+              <span>Highest scoring active matches</span>
+            </div>
+            <div id="outreachTargets" class="rank-list"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Communication History</h2>
+              <span>Email status and follow-up tracking</span>
+            </div>
+            <div id="outreachLog" class="activity-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="reports" class="view">
+        <div class="panel report-toolbar">
+          <div class="panel-head row">
+            <div>
+              <h2>Reports</h2>
+              <span>Executive recruitment summary and exports</span>
+            </div>
+            <button id="downloadReportPdf" class="secondary">Download PDF</button>
+          </div>
+        </div>
+        <div id="reportKpis" class="kpi-grid report-grid"></div>
+        <div class="split">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Hiring Funnel</h2>
+              <span>Stage conversion and bottlenecks</span>
+            </div>
+            <div id="reportFunnel" class="stage-bars"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Recruiter Scorecard</h2>
+              <span>Recruiter performance across review, outreach, and placement outcomes</span>
+            </div>
+            <div id="recruiterScorecard" class="scorecard-list"></div>
+          </section>
+        </div>
+        <div class="split">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>AI Match Analytics</h2>
+              <span>Recommendation quality indicators</span>
+            </div>
+            <div id="aiAnalytics" class="analytics-grid"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Outreach Analytics</h2>
+              <span>Campaign and response readiness</span>
+            </div>
+            <div id="outreachAnalytics" class="analytics-grid"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="compliance" class="view">
+        <div class="split">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Australian Work Rights</h2>
+              <span>Visa category tracking for recruiter review</span>
+            </div>
+            <div id="visaCards" class="analytics-grid"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Security Clearance</h2>
+              <span>No Clearance, Baseline, NV1, NV2, and TSPV coverage</span>
+            </div>
+            <div id="clearanceCards" class="analytics-grid"></div>
+          </section>
+        </div>
+        <div class="panel">
+          <div class="panel-head row">
+            <div>
+              <h2>Compliance Review Queue</h2>
+              <span>Candidates requiring work-rights or clearance validation</span>
+            </div>
+            <button class="secondary" data-jump-view="candidates">Review Candidates</button>
+          </div>
+          <div id="complianceRows" class="cards compact-cards"></div>
+        </div>
+      </section>
+
+      <section id="users" class="view">
+        <div class="split">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>User Management</h2>
+            <span>Admin, recruiter, and account manager access overview</span>
+            </div>
+            <div id="userCards" class="role-grid"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Role Access Matrix</h2>
+              <span>Real OTP authentication is now served from this app</span>
+            </div>
+            <div id="roleMatrix" class="matrix"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="clients" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Beta System Status</h2>
+              <span>Beta services checked from the running backend</span>
+            </div>
+            <div class="panel-actions">
+              <span id="systemCheckedAt" class="badge">Live</span>
+              <button id="refreshSystem" class="secondary">Refresh Status</button>
+            </div>
+          </div>
+          <div id="systemCards" class="integration-grid"></div>
+        </div>
+      </section>
+
+      <section id="ai" class="view">
+        <div class="ai-workspace">
+          <div class="panel-head ai-head">
+            <div>
+              <p class="eyebrow">Recruiter co-pilot</p>
+              <h2>AI, ATS Intelligence</h2>
+              <span>Shortlist, compare, prepare interviews, and draft recruiter actions from live ATS data</span>
+            </div>
+            <span id="aiStatusBadge" class="badge">Live ranking</span>
+          </div>
+          <div class="ai-command">
+            <div class="ai-avatar" aria-hidden="true">AI</div>
+            <div>
+              <strong>AI is watching jobs, resumes, matches, and outreach readiness.</strong>
+              <span>Ask for top-fit candidates, weak role coverage, interview questions, gap analysis, or a job-owner update.</span>
+            </div>
+            <div id="aiStats" class="ai-stats"></div>
+          </div>
+          <div class="insight-grid">
+            <button class="insight-tile" data-prompt="Create a recruiter brief: top 3 candidates, the role each fits, risk flags, and the next action for each.">
+              <strong>Shortlist</strong>
+              <span>Best candidates, role fit, and action owners</span>
+            </button>
+            <button class="insight-tile" data-prompt="Find weak job coverage. Show open roles with low candidate match, missing skills, and sourcing keywords to search next.">
+              <strong>Coverage</strong>
+              <span>Roles that need sourcing attention</span>
+            </button>
+            <button class="insight-tile" data-prompt="Prepare an interview plan for top matched candidates. Include screening focus, technical questions, and decision criteria.">
+              <strong>Interview</strong>
+              <span>Focused screen topics and criteria</span>
+            </button>
+            <button class="insight-tile" data-prompt="Act as AI. Compare the top 5 candidates against open jobs, flag missing skills, and recommend who to contact today.">
+              <strong>AI Review</strong>
+              <span>Candidate comparison and contact order</span>
+            </button>
+          </div>
+          <div class="quick-prompts">
+            <button data-prompt="Which open job needs recruiter attention first and why?">Priority role</button>
+            <button data-prompt="Rank the strongest candidates and explain the skill gaps briefly.">Rank candidates</button>
+            <button data-prompt="Draft a concise job owner update using the current hiring pipeline.">Owner update</button>
+            <button data-prompt="Write a candidate outreach message for the strongest fit.">Outreach</button>
+            <button data-prompt="What should AI do next to improve shortlist quality today?">AI next step</button>
+            <button id="newAiChat" type="button">New chat</button>
+          </div>
+          <div class="previous-chat-panel">
+            <div class="previous-chat-head">
+              <strong>Previous chats</strong>
+              <span>Click a chat to open it</span>
+            </div>
+            <div id="previousAiChats" class="previous-chat-list"></div>
+          </div>
+          <div class="chat-shell">
+            <div id="aiChatHistory" class="chat-history"></div>
+            <div class="prompt-row">
+              <textarea id="aiPrompt" rows="2" placeholder="Message ATS Intelligence...">Show top candidates for open jobs and suggest next actions.</textarea>
+              <button id="askAi" class="primary">Send</button>
+            </div>
+          </div>
+          <div id="aiOutput" class="ai-output empty" hidden>
+            <div class="empty-state">
+              <strong>Ready</strong>
+              <span>Ask about candidates, jobs, matches, interviews, or outreach.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <div id="undoToast" class="undo-toast" hidden>
+      <span id="undoText">Deleted.</span>
+      <button id="undoDelete">Undo</button>
+    </div>
+    <div id="previewModal" class="modal" hidden>
+      <div class="modal-dialog">
+        <div class="modal-head">
+          <div>
+            <h2 id="candidatePreviewName">Candidate Preview</h2>
+            <span id="candidatePreviewMeta"></span>
+          </div>
+          <button id="closePreview" class="icon-button" aria-label="Close preview">×</button>
+        </div>
+        <div id="candidatePreviewBody" class="candidate-preview-body"></div>
+      </div>
+    </div>
+    <div id="loginScreen" class="login-screen">
+      <form id="loginForm" class="login-card" novalidate>
+        <div class="login-brand">
+          <div class="brand-mark">A</div>
+          <div>
+            <strong>ASJ Recruitment ATS</strong>
+            <span>AI hiring workspace</span>
+          </div>
+        </div>
+        <h2 id="loginHeading">Sign in</h2>
+        <p id="loginSub" class="login-sub">Enter your work email to continue.</p>
+
+        <label class="login-field">
+          <span>Email</span>
+          <input id="loginEmail" type="email" placeholder="you@company.com" autocomplete="email" required />
+        </label>
+        <label id="loginNameGroup" class="login-field" hidden>
+          <span>Name</span>
+          <input id="loginName" placeholder="Your full name" autocomplete="name" />
+        </label>
+        <label id="loginRoleGroup" class="login-field" hidden>
+          <span>Role</span>
+          <select id="loginRole" disabled>
+            <option value="recruiter">Recruiter</option>
+            <option value="account_manager">Account Manager</option>
+            <option value="hiring_manager">Hiring Manager</option>
+            <option value="viewer">Viewer</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <label id="loginPasswordGroup" class="login-field" hidden>
+          <span id="loginPasswordLabel">Password</span>
+          <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password" disabled />
+        </label>
+        <label id="loginPasswordConfirmGroup" class="login-field" hidden>
+          <span>Confirm password</span>
+          <input id="loginPasswordConfirm" type="password" placeholder="••••••••" autocomplete="new-password" disabled />
+        </label>
+        <p id="loginError" class="login-error" hidden></p>
+        <button id="loginSubmit" type="submit" class="primary login-submit">Continue</button>
+        <button id="loginBack" type="button" class="login-link" hidden>Use a different email</button>
+      </form>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,541 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>ASJ Internal ATS Director Presentation Prep</title>
+    <style>
+      body { font-family: Arial, Helvetica, sans-serif; color: #111827; line-height: 1.5; }
+      h1 { color: #0f172a; font-size: 26px; margin-bottom: 4px; }
+      h2 { color: #0f766e; font-size: 20px; margin-top: 26px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; }
+      h3 { color: #334155; font-size: 16px; margin-top: 18px; }
+      p, li { font-size: 11.5pt; }
+      table { border-collapse: collapse; width: 100%; margin: 10px 0 16px; }
+      th, td { border: 1px solid #cbd5e1; padding: 8px; vertical-align: top; font-size: 10.5pt; }
+      th { background: #f0fdfa; color: #0f172a; text-align: left; }
+      .note { background: #f8fafc; border-left: 4px solid #0f766e; padding: 10px 12px; margin: 12px 0; }
+      .script { background: #f9fafb; border: 1px solid #d1d5db; padding: 12px; margin: 10px 0; }
+      code { font-family: Consolas, monospace; background: #f1f5f9; padding: 1px 3px; }
+    </style>
+  </head>
+  <body>
+    <h1>ASJ Internal ATS + CRM: Director Presentation Prep</h1>
+    <p><strong>Meeting date:</strong> Thursday, May 7, 2026</p>
+    <p><strong>Purpose:</strong> Explain what has been built from scratch, how it works technically, the software flow, and how to confidently present the prototype to the director.</p>
+
+    <div class="note">
+      <strong>Your main message:</strong> "We built a private internal ATS and CRM prototype for ASJ that receives website resumes, extracts candidate information, matches candidates to jobs, manages pipeline stages, supports client CRM visibility, and uses AI as a recruiter decision engine rather than a generic chatbot."
+    </div>
+
+    <h2>1. One-Minute Opening Script</h2>
+    <div class="script">
+      <p>Good morning. I will walk you through the ASJ Internal ATS prototype that we built from scratch. The goal was not to create a marketing website, but a private recruitment operating system for ASJ recruiters.</p>
+      <p>The system covers the recruitment flow from resume intake to candidate parsing, job matching, pipeline movement, client visibility, and AI-assisted recruiter decisions. The AI part has been designed as "Talent Intelligence", so it does not behave like a normal chatbot. Instead, it produces shortlist briefs, coverage gaps, interview plans, and next actions using the current ATS data.</p>
+      <p>I will first explain the business problem, then show the user flow, then explain the technical architecture and backend logic, and finally discuss improvements that can be added for a production version.</p>
+    </div>
+
+    <h2>2. What We Built</h2>
+    <p>We built an internal ATS + CRM prototype for ASJ Tech. ATS means Applicant Tracking System. The software is intended for internal recruiters to manage resumes, candidates, jobs, applications, and clients from one place.</p>
+
+    <table>
+      <tr>
+        <th>Area</th>
+        <th>What We Built</th>
+        <th>Why It Matters</th>
+      </tr>
+      <tr>
+        <td>Dashboard</td>
+        <td>KPI cards, hiring pipeline overview, recent activity feed, and AI page-level recommendation strip.</td>
+        <td>Gives recruiters a quick view of current hiring health.</td>
+      </tr>
+      <tr>
+        <td>Website Resume Inbox</td>
+        <td>Inbox for resumes coming from the ASJ website or manual upload. Supports PDF, DOC, and DOCX up to 10MB.</td>
+        <td>Creates a clear intake area before resumes become official candidate records.</td>
+      </tr>
+      <tr>
+        <td>Resume Parsing</td>
+        <td>Extracts readable text from uploaded resumes, detects extraction quality, and allows manual pasted text override.</td>
+        <td>Helps convert unstructured resumes into structured ATS data.</td>
+      </tr>
+      <tr>
+        <td>Candidate Management</td>
+        <td>Stores parsed candidate profiles with name, email, phone, role, experience, skills, tags, summary, and source.</td>
+        <td>Recruiters can search and review candidate profiles instead of manually reading every resume.</td>
+      </tr>
+      <tr>
+        <td>Jobs</td>
+        <td>Shows open jobs, client, location, description, required skills, and top matched candidate.</td>
+        <td>Connects hiring demand with available candidate supply.</td>
+      </tr>
+      <tr>
+        <td>Candidate Matching</td>
+        <td>Scores candidates against job skills and experience, identifies gaps, and recommends top/eligible/possible fit/not recommended.</td>
+        <td>Helps recruiters prioritize candidates faster.</td>
+      </tr>
+      <tr>
+        <td>Pipeline</td>
+        <td>Kanban board with stages: Applied, Screening, Interview, Offer, Hired. Applications can move between stages.</td>
+        <td>Tracks recruitment progress from application to hiring.</td>
+      </tr>
+      <tr>
+        <td>CRM</td>
+        <td>Client records with company, contact, industry, status, notes, and open jobs.</td>
+        <td>Connects recruitment operations with client relationship management.</td>
+      </tr>
+      <tr>
+        <td>Talent Intelligence</td>
+        <td>AI brief generation for shortlist briefs, coverage gaps, interview plans, outreach, and client updates.</td>
+        <td>Makes AI feel like an embedded recruiter assistant, not a generic chatbot.</td>
+      </tr>
+    </table>
+
+    <h2>3. Software Flow in Simple Terms</h2>
+    <p>The main flow is:</p>
+    <ol>
+      <li>A resume enters the system through the Website Resume Inbox, manual upload, text submission, or bulk folder import.</li>
+      <li>The backend stores the original resume in <code>data/uploads</code> and creates an inbox record in <code>data/db.json</code>.</li>
+      <li>The backend extracts text from the resume using local parsers and fallback logic.</li>
+      <li>The system checks whether the extracted text is good, partial, or poor.</li>
+      <li>Readable resumes can be parsed and imported into candidate profiles.</li>
+      <li>The system extracts skills, role category, experience, seniority, contact details, and summary.</li>
+      <li>The candidate is matched against open jobs using a scoring function.</li>
+      <li>Applications are created for the best job matches.</li>
+      <li>The recruiter manages the application through Applied, Screening, Interview, Offer, and Hired stages.</li>
+      <li>Talent Intelligence reads the current ATS data and produces recruiter briefs and next actions.</li>
+    </ol>
+
+    <h2>4. Demo Flow You Can Follow Tomorrow</h2>
+    <h3>Demo Step 1: Dashboard</h3>
+    <div class="script">
+      <p>Here I start on the dashboard. This gives a recruiter a quick operational overview: total candidates, open jobs, pending resumes, interviews, offers, and average match. Below that, the hiring pipeline shows how applications are distributed across stages, and the activity feed shows what changed recently.</p>
+    </div>
+
+    <h3>Demo Step 2: Website Resume Inbox</h3>
+    <div class="script">
+      <p>This is the intake point. In a real ASJ workflow, resumes submitted from the website would enter here. For the prototype, we support manual upload, text submissions, and bulk folder import. Uploaded files are stored locally and linked to inbox records.</p>
+      <p>The system also checks extraction quality. If a PDF is scanned or unreadable, it marks it for review instead of creating a bad candidate profile.</p>
+    </div>
+
+    <h3>Demo Step 3: Parse and Import</h3>
+    <div class="script">
+      <p>When I click Parse and Import, the backend converts pending resume inbox records into structured candidate profiles. It extracts contact details, role, experience, skills, tags, and summary. If Cohere is configured, AI can enrich the profile. If not, the system still has local parsing rules as a fallback.</p>
+    </div>
+
+    <h3>Demo Step 4: Candidates</h3>
+    <div class="script">
+      <p>In Candidates, we can see the structured profiles. This is important because recruiters should not have to manually inspect every resume to identify core details. The searchable table shows candidate name, role, experience, skills, source, and status.</p>
+    </div>
+
+    <h3>Demo Step 5: Jobs</h3>
+    <div class="script">
+      <p>The Jobs page shows each open role with required skills and the top matching candidate. This turns the ATS from simple storage into a matching tool. For example, if a role requires React, Node.js, PostgreSQL, AWS, and REST, the system compares candidates against those exact skills and shows match quality and missing skills.</p>
+    </div>
+
+    <h3>Demo Step 6: Pipeline</h3>
+    <div class="script">
+      <p>The Pipeline is a Kanban-style recruitment workflow. Applications are organized by stage: Applied, Screening, Interview, Offer, and Hired. Recruiters can move an application forward or backward, and the dashboard updates based on the current pipeline.</p>
+    </div>
+
+    <h3>Demo Step 7: CRM</h3>
+    <div class="script">
+      <p>The CRM page stores client details and open role counts. This is useful because ASJ recruitment is not only about candidates; it also needs client context. Each client record includes contact details, industry, status, notes, and connected jobs.</p>
+    </div>
+
+    <h3>Demo Step 8: Talent Intelligence</h3>
+    <div class="script">
+      <p>This was improved so the AI does not look like a chatbot. Earlier, AI output appeared like raw markdown in a dark box. We changed it into Talent Intelligence, where the output appears as formatted recruiter decision briefs.</p>
+      <p>The recruiter can generate a Shortlist Brief, Coverage Gaps, Interview Plan, Client Update, or Outreach message. Technically, the AI receives current jobs, candidates, applications, and recommendation data from the backend and then returns a concise internal brief.</p>
+    </div>
+
+    <h2>5. Technical Architecture</h2>
+    <table>
+      <tr>
+        <th>Layer</th>
+        <th>Technology</th>
+        <th>Responsibility</th>
+      </tr>
+      <tr>
+        <td>Frontend</td>
+        <td>Static HTML, CSS, JavaScript</td>
+        <td>Renders the ATS interface, handles navigation, calls backend APIs, displays candidates/jobs/pipeline/AI briefs.</td>
+      </tr>
+      <tr>
+        <td>Backend</td>
+        <td>Node.js HTTP server</td>
+        <td>Serves static files, exposes API routes, reads/writes local database, handles uploads and parsing.</td>
+      </tr>
+      <tr>
+        <td>Database</td>
+        <td>Local JSON file: <code>data/db.json</code></td>
+        <td>Stores users, clients, jobs, candidates, applications, website resumes, and activities for the prototype.</td>
+      </tr>
+      <tr>
+        <td>File Storage</td>
+        <td>Local folder: <code>data/uploads</code></td>
+        <td>Stores uploaded PDF, DOC, and DOCX resumes.</td>
+      </tr>
+      <tr>
+        <td>AI</td>
+        <td>Cohere Chat API with local fallback</td>
+        <td>Parses resumes when configured and generates Talent Intelligence recruiter briefs.</td>
+      </tr>
+      <tr>
+        <td>Matching Engine</td>
+        <td>Custom JavaScript scoring logic</td>
+        <td>Calculates match score based on skills, experience, role category, and eligible roles.</td>
+      </tr>
+    </table>
+
+    <h2>6. Important Backend APIs</h2>
+    <table>
+      <tr>
+        <th>API</th>
+        <th>Method</th>
+        <th>Purpose</th>
+      </tr>
+      <tr>
+        <td><code>/api/health</code></td>
+        <td>GET</td>
+        <td>Checks whether the server is running.</td>
+      </tr>
+      <tr>
+        <td><code>/api/all</code></td>
+        <td>GET</td>
+        <td>Returns hydrated app data: candidates, jobs, clients, applications, resumes.</td>
+      </tr>
+      <tr>
+        <td><code>/api/dashboard</code></td>
+        <td>GET</td>
+        <td>Returns KPIs, stage counts, source counts, and recent activity.</td>
+      </tr>
+      <tr>
+        <td><code>/api/recommendations</code></td>
+        <td>GET</td>
+        <td>Returns calculated top candidates, job matches, attention items, and market signals.</td>
+      </tr>
+      <tr>
+        <td><code>/api/upload-resume</code></td>
+        <td>POST</td>
+        <td>Uploads a resume file, stores it, extracts text, and optionally imports it.</td>
+      </tr>
+      <tr>
+        <td><code>/api/sync-resumes</code></td>
+        <td>POST</td>
+        <td>Parses pending website resumes into candidate profiles and application matches.</td>
+      </tr>
+      <tr>
+        <td><code>/api/reparse-resumes</code></td>
+        <td>POST</td>
+        <td>Re-reads stored resume files and updates extracted text and candidate data.</td>
+      </tr>
+      <tr>
+        <td><code>/api/import-folder</code></td>
+        <td>POST</td>
+        <td>Imports PDF/DOC/DOCX resumes from a local folder into the resume inbox.</td>
+      </tr>
+      <tr>
+        <td><code>/api/applications/:id</code></td>
+        <td>PATCH</td>
+        <td>Updates application stage and notes.</td>
+      </tr>
+      <tr>
+        <td><code>/api/ai-insight</code></td>
+        <td>POST</td>
+        <td>Generates Talent Intelligence recruiter briefs from current ATS data.</td>
+      </tr>
+    </table>
+
+    <h2>7. Resume Parsing Logic</h2>
+    <p>The resume parser is designed as a dependency-light prototype. The flow is:</p>
+    <ol>
+      <li>Accept only PDF, DOC, and DOCX files.</li>
+      <li>Reject files larger than 10MB.</li>
+      <li>Store the file safely using a sanitized filename.</li>
+      <li>Try local extraction tools first:
+        <ul>
+          <li>PDF: <code>pdftotext</code> if available, then macOS metadata fallback.</li>
+          <li>DOC/DOCX: macOS <code>textutil</code> if available.</li>
+        </ul>
+      </li>
+      <li>If local tools are not enough, use built-in fallback logic:
+        <ul>
+          <li>DOCX XML extraction from zipped document structure.</li>
+          <li>PDF stream/operator text extraction.</li>
+          <li>Readable text extraction fallback.</li>
+        </ul>
+      </li>
+      <li>Clean the extracted text by removing bad characters and normalizing spaces/newlines.</li>
+      <li>Score extraction quality as good, partial, or poor.</li>
+      <li>If extraction is poor, the resume is marked for review instead of creating unreliable candidate data.</li>
+    </ol>
+
+    <h2>8. Candidate Parsing Logic</h2>
+    <p>After resume text is available, the system extracts candidate fields:</p>
+    <ul>
+      <li>Email using regex.</li>
+      <li>Phone number using pattern matching.</li>
+      <li>Experience years from text like "5 years".</li>
+      <li>Name from the first useful line before contact information.</li>
+      <li>Skills by comparing resume text against the known skills list.</li>
+      <li>Role category using keyword groups such as AI/ML, Data, Full Stack, Cloud/DevOps, Design, and Backend.</li>
+      <li>Seniority from experience years: Emerging, Mid-level, Senior, or Lead.</li>
+      <li>AI summary and market fit using Cohere when configured, otherwise local summary logic.</li>
+    </ul>
+
+    <h2>9. Matching Engine Logic</h2>
+    <p>The matching engine compares each candidate to each open job. The score includes:</p>
+    <ul>
+      <li><strong>Skill match:</strong> Required job skills matched against candidate skills. This is the largest part of the score.</li>
+      <li><strong>Experience bonus:</strong> More years of experience increases the score up to a limit.</li>
+      <li><strong>Role category bonus:</strong> If the candidate role category aligns with the job title/description, the score improves.</li>
+      <li><strong>Eligible role bonus:</strong> If AI/local parsing identifies the candidate as eligible for a similar role, score improves.</li>
+      <li><strong>Recommendation label:</strong> Score is mapped to top candidate, eligible, possible fit, or not recommended.</li>
+    </ul>
+
+    <p>Recommendation thresholds:</p>
+    <table>
+      <tr>
+        <th>Score Range</th>
+        <th>Recommendation</th>
+      </tr>
+      <tr>
+        <td>85 and above</td>
+        <td>Top candidate</td>
+      </tr>
+      <tr>
+        <td>70 to 84</td>
+        <td>Eligible</td>
+      </tr>
+      <tr>
+        <td>55 to 69</td>
+        <td>Possible fit</td>
+      </tr>
+      <tr>
+        <td>Below 55</td>
+        <td>Not recommended</td>
+      </tr>
+    </table>
+
+    <h2>10. AI / Talent Intelligence Explanation</h2>
+    <p>The AI is not used as a standalone chat window. It is connected to ATS context. The backend sends AI a compact snapshot of:</p>
+    <ul>
+      <li>Open jobs and required skills.</li>
+      <li>Candidate names, roles, and skills.</li>
+      <li>Applications, pipeline stages, match scores, and skill gaps.</li>
+      <li>Precomputed recommendations from the matching engine.</li>
+    </ul>
+    <p>We also changed the system prompt so the AI behaves like ASJ Talent Intelligence. It is instructed to write concise internal recruiter briefs with sections like Recruiter Brief, Strongest Matches, Coverage Risks, and Next Actions. The frontend then renders the output as readable sections instead of raw markdown.</p>
+
+    <h2>11. What We Improved Recently</h2>
+    <table>
+      <tr>
+        <th>Before</th>
+        <th>After</th>
+      </tr>
+      <tr>
+        <td>The AI area felt like a normal chatbot with an "Ask AI" button.</td>
+        <td>It is now called Talent Intelligence and feels like an ATS decision tool.</td>
+      </tr>
+      <tr>
+        <td>AI output appeared in a dark code-style box with markdown symbols like <code>###</code> and <code>**</code>.</td>
+        <td>AI output is formatted as readable recruiter brief sections with better font, spacing, and labels.</td>
+      </tr>
+      <tr>
+        <td>Prompts were generic.</td>
+        <td>Prompts are recruiter workflow actions: Shortlist Brief, Coverage Gaps, Interview Plan, Client Update, Outreach.</td>
+      </tr>
+      <tr>
+        <td>The AI could sound generic.</td>
+        <td>The backend now instructs it to write as ASJ Talent Intelligence, an embedded recruiter decision engine.</td>
+      </tr>
+    </table>
+
+    <h2>12. How to Explain "Built From Scratch"</h2>
+    <div class="script">
+      <p>We built this as a custom prototype rather than installing a ready-made ATS. The frontend is plain HTML, CSS, and JavaScript, and the backend is a Node.js server using built-in modules. The database is a local JSON file for prototype speed, and uploaded resumes are stored in a local uploads folder. This allowed us to build the end-to-end flow quickly without depending on a full database setup.</p>
+      <p>Even though this is a prototype, the architecture is close to how a production system would be organized: frontend screens, backend APIs, database records, file storage, resume parsing, matching logic, and AI services. For production, we would replace JSON with PostgreSQL, local files with cloud object storage, and basic parsing with a dedicated document parser or OCR service.</p>
+    </div>
+
+    <h2>13. Important Files to Mention</h2>
+    <table>
+      <tr>
+        <th>File</th>
+        <th>Purpose</th>
+      </tr>
+      <tr>
+        <td><code>backend/server.js</code></td>
+        <td>Main backend server, API routes, resume parsing, candidate matching, AI integration, file upload handling.</td>
+      </tr>
+      <tr>
+        <td><code>public/index.html</code></td>
+        <td>Main UI structure with sidebar navigation and page sections.</td>
+      </tr>
+      <tr>
+        <td><code>public/app.js</code></td>
+        <td>Frontend state management, API calls, rendering dashboard/candidates/jobs/pipeline/AI output.</td>
+      </tr>
+      <tr>
+        <td><code>public/styles.css</code></td>
+        <td>Visual design, responsive layout, cards, tables, pipeline board, Talent Intelligence output styling.</td>
+      </tr>
+      <tr>
+        <td><code>data/db.json</code></td>
+        <td>Prototype database storing users, clients, jobs, candidates, applications, website resumes, and activities.</td>
+      </tr>
+      <tr>
+        <td><code>data/uploads</code></td>
+        <td>Local resume file storage.</td>
+      </tr>
+    </table>
+
+    <h2>14. Full 5-7 Minute Speaking Script</h2>
+    <div class="script">
+      <p><strong>Start:</strong> Today I am presenting the ASJ Internal ATS and CRM prototype. The idea was to build a private internal recruitment system for ASJ, not a public marketing website. The system supports the actual recruitment workflow: resume intake, parsing, candidate profile creation, job matching, pipeline tracking, CRM visibility, and AI-assisted recruiter decisions.</p>
+
+      <p><strong>Problem:</strong> In recruitment, a lot of time is spent manually reading resumes, identifying skills, comparing candidates with job requirements, tracking pipeline status, and preparing client updates. Our goal was to reduce that manual work and centralize it into one internal tool.</p>
+
+      <p><strong>Solution:</strong> The solution is an AI-first ATS + CRM. Recruiters can upload resumes or import resume folders, parse them into candidates, match candidates against open jobs, move applications through pipeline stages, and use Talent Intelligence to generate useful recruiter briefs.</p>
+
+      <p><strong>Dashboard:</strong> The dashboard gives an operational snapshot. It shows candidate count, open jobs, pending resumes, interviews, offers, average match, pipeline stage counts, and recent activity.</p>
+
+      <p><strong>Resume Inbox:</strong> The Website Resume Inbox acts as the intake layer. In production, this would connect to the ASJ website database. In the prototype, it supports manual uploads, text submissions, and bulk folder import. We support PDF, DOC, and DOCX files, and we check extraction quality so poor scanned resumes are not blindly converted into bad candidate profiles.</p>
+
+      <p><strong>Parsing:</strong> Once a resume is readable, the backend extracts structured information such as name, email, phone, role, skills, experience, seniority, eligible roles, and summary. If Cohere AI is configured, it enriches parsing. If AI is unavailable, we still have local parsing rules so the prototype remains functional.</p>
+
+      <p><strong>Matching:</strong> The matching engine compares candidate skills with job required skills. It also considers experience, role category, and eligible roles. The result is a match score and recommendation label, such as top candidate, eligible, possible fit, or not recommended. This is visible in Jobs, Pipeline, and Talent Intelligence.</p>
+
+      <p><strong>Pipeline:</strong> The pipeline is a Kanban board with stages: Applied, Screening, Interview, Offer, and Hired. Recruiters can move applications between stages, and the system updates the dashboard and activity feed.</p>
+
+      <p><strong>CRM:</strong> The CRM stores client details such as company, contact person, industry, status, notes, and open roles. This links recruitment delivery with client management.</p>
+
+      <p><strong>Talent Intelligence:</strong> We improved the AI experience so it does not feel like a chatbot. It now behaves like a recruiter decision engine. It can produce shortlist briefs, coverage gaps, interview plans, client updates, and outreach messages. The output is formatted as a professional internal brief rather than raw markdown.</p>
+
+      <p><strong>Technical side:</strong> The frontend is built with HTML, CSS, and JavaScript. The backend is Node.js using the built-in HTTP server. Data is stored in a local JSON file for this prototype, and resume files are stored in a local uploads folder. The backend exposes API routes for data loading, dashboard metrics, recommendations, resume upload, resume sync, folder import, application updates, and AI insight generation.</p>
+
+      <p><strong>Production path:</strong> For production, the same architecture can be upgraded by replacing the JSON file with PostgreSQL, replacing local uploads with cloud object storage, adding authentication and role permissions, integrating the ASJ website form directly, using robust OCR/document parsing, and adding audit logs and email/calendar workflows.</p>
+
+      <p><strong>Close:</strong> So the main achievement is that we have an end-to-end internal recruitment workflow running: from resume intake to parsing, matching, pipeline movement, CRM context, and AI-generated recruiter decisions. This gives ASJ a strong foundation for a production-grade internal ATS.</p>
+    </div>
+
+    <h2>15. Short Version If You Get Nervous</h2>
+    <div class="script">
+      <p>We built a private ATS and CRM for ASJ. It takes resumes from a website inbox or upload, extracts candidate information, stores structured candidate profiles, matches candidates to open jobs, tracks them through a hiring pipeline, stores client CRM data, and uses AI to generate recruiter decision briefs.</p>
+      <p>Technically, it has a static JavaScript frontend, a Node.js backend, local JSON database, local file uploads, custom resume parsing, skill-based matching, and Cohere AI integration with local fallback logic. The latest improvement was changing AI from a chatbot-style page into Talent Intelligence, so the output is formatted like an internal recruiter brief.</p>
+    </div>
+
+    <h2>16. Questions the Director May Ask</h2>
+    <table>
+      <tr>
+        <th>Question</th>
+        <th>Suggested Answer</th>
+      </tr>
+      <tr>
+        <td>Is this production ready?</td>
+        <td>This is a functional prototype. The workflow is complete, but production would need authentication, PostgreSQL, secure file storage, OCR/document parser integration, deployment hardening, and permission controls.</td>
+      </tr>
+      <tr>
+        <td>Where is the data stored?</td>
+        <td>For the prototype, structured data is stored in <code>data/db.json</code>, and uploaded resumes are stored in <code>data/uploads</code>. In production, this should move to PostgreSQL and object storage.</td>
+      </tr>
+      <tr>
+        <td>How does matching work?</td>
+        <td>The system compares job required skills with candidate skills, adds experience and role-fit bonuses, calculates a score, identifies skill gaps, and assigns a recommendation label.</td>
+      </tr>
+      <tr>
+        <td>What happens if AI is unavailable?</td>
+        <td>The app still works using local parsing and recommendation logic. AI improves summaries and briefs, but the core ATS flow does not completely depend on AI.</td>
+      </tr>
+      <tr>
+        <td>How is this better than a chatbot?</td>
+        <td>The AI is grounded in ATS data. It receives jobs, candidates, applications, scores, and gaps, then returns recruiter-specific decision briefs such as shortlist, interview plan, and coverage risks.</td>
+      </tr>
+      <tr>
+        <td>What is the next improvement?</td>
+        <td>The highest-value next steps are website form integration, login/authentication, PostgreSQL migration, OCR parsing, email/calendar actions, and making AI brief actions clickable.</td>
+      </tr>
+    </table>
+
+    <h2>17. Technical Terms You Should Know</h2>
+    <table>
+      <tr>
+        <th>Term</th>
+        <th>Simple Explanation</th>
+      </tr>
+      <tr>
+        <td>ATS</td>
+        <td>Applicant Tracking System. Software used to manage candidates, jobs, applications, and hiring stages.</td>
+      </tr>
+      <tr>
+        <td>CRM</td>
+        <td>Customer Relationship Management. In this project, client company/contact management for recruitment accounts.</td>
+      </tr>
+      <tr>
+        <td>API</td>
+        <td>A backend endpoint the frontend calls to get or update data.</td>
+      </tr>
+      <tr>
+        <td>JSON database</td>
+        <td>A file storing structured data for the prototype. Easy for development, but not ideal for production concurrency.</td>
+      </tr>
+      <tr>
+        <td>Resume parsing</td>
+        <td>Converting resume files or text into structured candidate fields.</td>
+      </tr>
+      <tr>
+        <td>Hydration</td>
+        <td>Combining related records before sending data to the frontend, such as attaching candidate and job details to applications.</td>
+      </tr>
+      <tr>
+        <td>Kanban</td>
+        <td>A board layout where items move through workflow stages.</td>
+      </tr>
+      <tr>
+        <td>OCR</td>
+        <td>Optical Character Recognition. Needed to read scanned/image-based resumes.</td>
+      </tr>
+    </table>
+
+    <h2>18. Limitations to Mention Honestly</h2>
+    <ul>
+      <li>The current database is JSON, so it is good for prototype/demo but should become PostgreSQL for production.</li>
+      <li>Authentication and user roles are not fully implemented yet.</li>
+      <li>Scanned resumes need OCR integration for reliable extraction.</li>
+      <li>The matching score is rule-based; it can be improved with deeper semantic matching.</li>
+      <li>Email/calendar integration is not added yet.</li>
+      <li>Deployment, backup, logging, and security hardening are future production tasks.</li>
+    </ul>
+
+    <h2>19. Recommended Roadmap</h2>
+    <table>
+      <tr>
+        <th>Phase</th>
+        <th>Work</th>
+      </tr>
+      <tr>
+        <td>Phase 1: Stabilize Prototype</td>
+        <td>Clean data model, polish UI, improve AI brief actions, add more validation and tests.</td>
+      </tr>
+      <tr>
+        <td>Phase 2: Production Backend</td>
+        <td>Move from JSON to PostgreSQL, add authentication, role-based access, audit logs, and secure file storage.</td>
+      </tr>
+      <tr>
+        <td>Phase 3: Website Integration</td>
+        <td>Connect ASJ website career form directly to the resume inbox and database.</td>
+      </tr>
+      <tr>
+        <td>Phase 4: Parsing and AI Upgrade</td>
+        <td>Add OCR, dedicated document parser, semantic matching, and AI actions such as draft email or create interview plan.</td>
+      </tr>
+      <tr>
+        <td>Phase 5: Operations</td>
+        <td>Deploy to cloud, add backups, monitoring, logging, admin controls, and security review.</td>
+      </tr>
+    </table>
+
+    <h2>20. Final Confidence Line</h2>
+    <div class="script">
+      <p>The best way to present this is to stay calm and explain it as a flow. Do not try to memorize every line. Remember this sequence: resume comes in, system parses it, candidate is created, job match is calculated, application enters pipeline, CRM keeps client context, and Talent Intelligence gives recruiter next actions.</p>
+    </div>
+  </body>
+</html>
