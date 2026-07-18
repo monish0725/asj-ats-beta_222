@@ -33,3 +33,8 @@ pool.on("error", (error) => {
 });
 
 export default pool;
+
+// Ping the database every 4 days to prevent Supabase free-tier pausing
+setInterval(async () => {
+  try { await pool.query("SELECT 1"); } catch {}
+}, 4 * 24 * 60 * 60 * 1000);

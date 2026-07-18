@@ -28,10 +28,48 @@
       <div class="nav-group">
         <span>Intelligence</span>
         <button class="nav" data-view="reports"><span>RP</span>Reports</button>
+        <button class="nav" data-view="activity"><span>AL</span>Activity Log</button>
         <button class="nav" data-view="compliance"><span>CP</span>Compliance</button>
-        <button class="nav" data-view="users"><span>US</span>Users</button>
         <button class="nav" data-view="ai"><span>AI</span>ATS Intelligence</button>
         <button class="nav" data-view="clients"><span>SS</span>System Status</button>
+      </div>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-profile" id="sidebarProfile">
+        <button class="sidebar-profile-trigger" id="userChip" type="button" aria-haspopup="true" aria-expanded="false">
+          <span class="sidebar-profile-avatar" id="userChipInitials">A</span>
+          <span class="sidebar-profile-text">
+            <strong id="userChipName">Account</strong>
+            <span id="userChipRole">Admin</span>
+          </span>
+          <span class="sidebar-profile-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="sidebar-profile-menu" id="sidebarProfileMenu" hidden>
+          <div class="sidebar-profile-menu-header">
+            <span class="sidebar-profile-menu-avatar" id="menuUserInitials">A</span>
+            <span class="sidebar-profile-menu-identity">
+              <strong id="menuUserName">Account</strong>
+              <span class="menu-role" id="menuUserRole">Admin</span>
+              <span class="menu-email" id="menuUserEmail"></span>
+            </span>
+          </div>
+          <button type="button" data-profile-menu-action="profile">
+            <span class="menu-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+            Profile
+          </button>
+          <button type="button" data-profile-menu-action="settings">
+            <span class="menu-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+            Settings
+          </button>
+          <button type="button" data-profile-menu-action="help">
+            <span class="menu-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+            Help
+          </button>
+          <div class="sidebar-profile-menu-divider"></div>
+          <button type="button" data-profile-menu-action="logout" class="danger-text">
+            <span class="menu-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
+            Log out
+          </button>
+        </div>
       </div>
     </aside>
 
@@ -47,10 +85,18 @@
             <button class="clear-search" data-clear-input="search" type="button" title="Clear search">×</button>
           </label>
           <button id="syncBtn" class="primary parse-action" data-role-restricted="inbox"><span class="parse-icon" aria-hidden="true"></span>Parse Resumes</button>
-          <button class="user-chip" id="userChip" type="button" title="Sign out">
-            <strong id="userChipInitials">A</strong>
-            <span id="userChipRole">Admin</span>
-          </button>
+          <div class="notification-wrap">
+            <button id="notificationBell" class="icon-action" type="button" title="Notifications">
+              🔔<span id="notificationBadge" class="notification-badge" hidden>0</span>
+            </button>
+            <div id="notificationPanel" class="notification-panel" hidden>
+              <div class="notification-panel-head">
+                <strong>Notifications</strong>
+                <button id="markAllReadBtn" class="button-link" type="button">Mark all read</button>
+              </div>
+              <div id="notificationList" class="notification-list"></div>
+            </div>
+          </div>
         </div>
       </header>
       <section class="ai-strip">
@@ -64,10 +110,10 @@
       <section id="dashboard" class="view active">
         <div id="kpis" class="kpi-grid"></div>
         <div class="quick-actions">
-          <button data-jump-view="inbox">Upload Resume</button>
-          <button data-jump-view="jobs">Create Job</button>
-          <button data-jump-view="pipeline">Review Pipeline</button>
-          <button data-jump-view="reports">View Reports</button>
+          <button data-jump-view="inbox" data-role-restricted="inbox">Upload Resume</button>
+          <button data-jump-view="jobs" data-role-restricted="jobs">Create Job</button>
+          <button data-jump-view="pipeline" data-quick-action-view="pipeline">Review Pipeline</button>
+          <button data-jump-view="reports" data-quick-action-view="reports">View Reports</button>
         </div>
         <div class="split">
           <section class="panel">
@@ -77,7 +123,7 @@
             </div>
             <div id="stageBars" class="stage-bars"></div>
           </section>
-          <section class="panel">
+          <section class="panel" id="dashboardActivityPanel">
             <div class="panel-head">
               <h2>Recent Activity</h2>
               <span>Audit trail</span>
@@ -93,7 +139,7 @@
             </div>
             <div id="dashboardMatches" class="rank-list"></div>
           </section>
-          <section class="panel">
+          <section class="panel" id="dashboardInboxHealthPanel">
             <div class="panel-head">
               <h2>Resume Inbox Health</h2>
               <span>Upload, parse, review</span>
@@ -331,10 +377,33 @@
             <input id="outreachSubject" placeholder="Subject" />
             <textarea id="outreachMessage" rows="7" placeholder="Write or generate a professional candidate message..."></textarea>
             <div class="composer-actions">
-              <button id="generateOutreach" class="secondary" data-role-restricted="outreach">Generate AI Message</button>
+              <div class="composer-actions-left">
+                <button id="generateOutreach" class="secondary" data-role-restricted="outreach">Generate AI Message</button>
+                <button class="clear-inline" data-clear-input="outreachSubject,outreachMessage" type="button" title="Clear subject and message">×</button>
+              </div>
               <span class="muted">Use {{name}} for bulk personalization.</span>
             </div>
           </div>
+          <div id="followupPanel" class="followup-panel" hidden>
+            <label>Send follow-up after
+              <input id="followupAfterDays" type="number" min="1" max="60" value="3" /> day(s)
+            </label>
+            <button id="scheduleFollowup" class="primary" data-role-restricted="outreach">Schedule Follow-up</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Outreach Analytics</h2>
+            <span>Delivery performance across all campaigns</span>
+          </div>
+          <div id="outreachAnalytics" class="analytics-grid"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Scheduled Follow-Ups</h2>
+            <span>Upcoming and past follow-up reminders</span>
+          </div>
+          <div id="followupHistory" class="activity-list"></div>
         </div>
         <div class="split">
           <section class="panel">
@@ -361,7 +430,13 @@
               <h2>Reports</h2>
               <span>Executive recruitment summary and exports</span>
             </div>
-            <button id="downloadReportPdf" class="secondary">Download PDF</button>
+            <div class="report-toolbar-actions">
+              <button id="downloadReportPdf" class="secondary">Download PDF</button>
+              <button id="exportCandidatesReport" class="secondary">Candidates CSV</button>
+              <button id="exportJobsReport" class="secondary">Jobs CSV</button>
+              <button id="exportComplianceReport" class="secondary">Compliance CSV</button>
+              <button id="exportRecruiterReport" class="secondary">Recruiter CSV</button>
+            </div>
           </div>
         </div>
         <div id="reportKpis" class="kpi-grid report-grid"></div>
@@ -394,12 +469,34 @@
               <h2>Outreach Analytics</h2>
               <span>Campaign and response readiness</span>
             </div>
-            <div id="outreachAnalytics" class="analytics-grid"></div>
+            <div id="reportsOutreachAnalytics" class="analytics-grid"></div>
           </section>
+        </div>
+      </section>
+      <section id="activity" class="view">
+        <div class="panel">
+          <div class="panel-head row">
+            <div>
+              <h2>Activity Log</h2>
+              <span>Full audit trail of actions across the system</span>
+            </div>
+          </div>
+          <div class="candidate-filter-row">
+            <input id="activitySearch" type="search" placeholder="Search activity..." />
+            <button id="activityResetFilter" class="secondary">Reset</button>
+          </div>
+          <div id="activityLogList" class="activity-list"></div>
         </div>
       </section>
 
       <section id="compliance" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Compliance Dashboard</h2>
+            <span>Document verification status across all candidates</span>
+          </div>
+          <div id="complianceSummaryCards" class="analytics-grid"></div>
+        </div>
         <div class="split">
           <section class="panel">
             <div class="panel-head">
@@ -419,31 +516,46 @@
         <div class="panel">
           <div class="panel-head row">
             <div>
-              <h2>Compliance Review Queue</h2>
-              <span>Candidates requiring work-rights or clearance validation</span>
+              <h2>Candidate Compliance</h2>
+              <span>Document status, expiry tracking, and verification</span>
             </div>
-            <button class="secondary" data-jump-view="candidates">Review Candidates</button>
+          </div>
+          <div class="candidate-filter-row">
+            <input id="complianceSearch" type="search" placeholder="Search candidates..." />
+            <select id="complianceStatusFilter">
+              <option value="">All statuses</option>
+              <option value="verified">Verified</option>
+              <option value="pending">Pending</option>
+              <option value="review_required">Review Required</option>
+              <option value="expired">Expired</option>
+              <option value="missing">Missing Documents</option>
+            </select>
+            <select id="complianceVisaFilter">
+              <option value="">All visa types</option>
+              <option>Australian Citizen</option>
+              <option>Permanent Resident</option>
+              <option>Full Work Rights</option>
+              <option>Student Visa</option>
+              <option>Sponsorship Required</option>
+              <option>Needs Verification</option>
+            </select>
+            <select id="complianceClearanceFilter">
+              <option value="">All clearances</option>
+              <option>No Clearance</option>
+              <option>Baseline</option>
+              <option>NV1</option>
+              <option>NV2</option>
+              <option>TSPV</option>
+              <option>Clearance</option>
+            </select>
+            <select id="complianceExpiryFilter">
+              <option value="">Any expiry</option>
+              <option value="expiring">Expiring within 30 days</option>
+              <option value="expired">Already expired</option>
+            </select>
+            <button id="complianceResetFilters" class="secondary">Reset</button>
           </div>
           <div id="complianceRows" class="cards compact-cards"></div>
-        </div>
-      </section>
-
-      <section id="users" class="view">
-        <div class="split">
-          <section class="panel">
-            <div class="panel-head">
-              <h2>User Management</h2>
-            <span>Admin, recruiter, and account manager access overview</span>
-            </div>
-            <div id="userCards" class="role-grid"></div>
-          </section>
-          <section class="panel">
-            <div class="panel-head">
-              <h2>Role Access Matrix</h2>
-              <span>Real OTP authentication is now served from this app</span>
-            </div>
-            <div id="roleMatrix" class="matrix"></div>
-          </section>
         </div>
       </section>
 
@@ -517,7 +629,10 @@
           <div class="chat-shell">
             <div id="aiChatHistory" class="chat-history"></div>
             <div class="prompt-row">
-              <textarea id="aiPrompt" rows="2" placeholder="Message ATS Intelligence...">Show top candidates for open jobs and suggest next actions.</textarea>
+              <div class="prompt-input-wrap">
+                <textarea id="aiPrompt" rows="2" placeholder="Message ATS Intelligence...">Show top candidates for open jobs and suggest next actions.</textarea>
+                <button class="clear-search prompt-clear" data-clear-input="aiPrompt" type="button" title="Clear prompt">×</button>
+              </div>
               <button id="askAi" class="primary">Send</button>
             </div>
           </div>
@@ -530,6 +645,19 @@
         </div>
       </section>
     </main>
+    </div>
+
+    <div id="settingsOverlay" class="settings-overlay" hidden>
+      <div class="settings-overlay-panel">
+        <div class="settings-overlay-head">
+          <strong>Settings</strong>
+          <button id="closeSettingsOverlay" class="icon-action" type="button" aria-label="Close settings" title="Close">✕</button>
+        </div>
+        <div class="settings-shell">
+          <nav id="settingsNav" class="settings-nav"></nav>
+          <div id="settingsContent" class="settings-content"></div>
+        </div>
+      </div>
     </div>
 
     <div id="toast" class="toast"></div>
@@ -549,48 +677,279 @@
         <div id="candidatePreviewBody" class="candidate-preview-body"></div>
       </div>
     </div>
-    <div id="loginScreen" class="login-screen">
-      <form id="loginForm" class="login-card" novalidate>
-        <div class="login-brand">
-          <div class="brand-mark">A</div>
-          <div>
-            <strong>ASJ Recruitment ATS</strong>
-            <span>AI hiring workspace</span>
+    <div id="landingPage" class="landing">
+      <header class="landing-nav">
+        <div class="landing-nav-inner">
+          <a href="#landingTop" class="landing-brand">
+            <div class="brand-mark">A</div>
+            <span>ASJ Recruitment ATS</span>
+          </a>
+          <nav class="landing-nav-links">
+            <a href="#landingTop">Home</a>
+            <a href="#landingFeatures">Features</a>
+            <a href="#landingPricing">Pricing</a>
+            <a href="#landingAbout">About</a>
+            <a href="#landingContact">Contact</a>
+          </nav>
+          <div class="landing-nav-actions">
+            <button type="button" class="secondary compact-button" data-open-auth="login">Login</button>
+            <button type="button" class="primary compact-button" data-open-auth="signup">Get Started</button>
           </div>
         </div>
-        <h2 id="loginHeading">Sign in</h2>
-        <p id="loginSub" class="login-sub">Enter your work email to continue.</p>
+      </header>
 
-        <label class="login-field">
-          <span>Email</span>
-          <input id="loginEmail" type="email" placeholder="you@company.com" autocomplete="email" required />
-        </label>
-        <label id="loginNameGroup" class="login-field" hidden>
-          <span>Name</span>
-          <input id="loginName" placeholder="Your full name" autocomplete="name" />
-        </label>
-        <label id="loginRoleGroup" class="login-field" hidden>
-          <span>Role</span>
-          <select id="loginRole" disabled>
-            <option value="recruiter">Recruiter</option>
-            <option value="account_manager">Account Manager</option>
-            <option value="hiring_manager">Hiring Manager</option>
-            <option value="viewer">Viewer</option>
-            <option value="admin">Admin</option>
-          </select>
-        </label>
-        <label id="loginPasswordGroup" class="login-field" hidden>
-          <span id="loginPasswordLabel">Password</span>
-          <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password" disabled />
-        </label>
-        <label id="loginPasswordConfirmGroup" class="login-field" hidden>
-          <span>Confirm password</span>
-          <input id="loginPasswordConfirm" type="password" placeholder="••••••••" autocomplete="new-password" disabled />
-        </label>
-        <p id="loginError" class="login-error" hidden></p>
-        <button id="loginSubmit" type="submit" class="primary login-submit">Continue</button>
-        <button id="loginBack" type="button" class="login-link" hidden>Use a different email</button>
-      </form>
+      <main>
+        <section id="landingTop" class="landing-hero">
+          <div class="landing-hero-copy">
+            <span class="landing-eyebrow">AI-Powered Applicant Tracking</span>
+            <h1>Hiring, resolved by <span>AI</span> — not spreadsheets.</h1>
+            <p>ASJ Recruitment ATS parses resumes, scores every candidate against your open roles, flags ATS issues before recruiters do, and keeps every pipeline moving — all in one workspace built for recruiting teams.</p>
+            <div class="landing-hero-actions">
+              <button type="button" class="primary landing-cta" data-open-auth="signup">Get Started Free</button>
+              <button type="button" class="secondary landing-cta" data-open-auth="login">Login to your workspace</button>
+            </div>
+            <div class="landing-hero-stats">
+              <div><strong>10K+</strong><span>Resumes parsed</span></div>
+              <div><strong>90%+</strong><span>Faster shortlisting</span></div>
+              <div><strong>AI</strong><span>Match &amp; ATS scoring</span></div>
+            </div>
+          </div>
+          <div class="landing-hero-visual" aria-hidden="true">
+            <div class="landing-mock-window">
+              <div class="landing-mock-topbar"><span></span><span></span><span></span></div>
+              <div class="landing-mock-row"><div class="landing-mock-avatar">JS</div><div class="landing-mock-lines"><span class="w60"></span><span class="w40"></span></div><span class="landing-mock-score good">96%</span></div>
+              <div class="landing-mock-row"><div class="landing-mock-avatar alt">PL</div><div class="landing-mock-lines"><span class="w70"></span><span class="w30"></span></div><span class="landing-mock-score avg">78%</span></div>
+              <div class="landing-mock-row"><div class="landing-mock-avatar">RK</div><div class="landing-mock-lines"><span class="w50"></span><span class="w45"></span></div><span class="landing-mock-score good">91%</span></div>
+              <div class="landing-mock-chart">
+                <span style="height:40%"></span><span style="height:65%"></span><span style="height:50%"></span>
+                <span style="height:85%"></span><span style="height:60%"></span><span style="height:75%"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="landing-section" id="landingWhatWeDo">
+          <div class="landing-section-head">
+            <span class="landing-eyebrow">What We Do</span>
+            <h2>One workspace for the entire hiring lifecycle</h2>
+            <p>From the moment a resume lands in your inbox to the day an offer is signed, ASJ ATS keeps recruiters, hiring managers, and account managers working from the same source of truth.</p>
+          </div>
+          <div class="landing-grid-3">
+            <div class="landing-info-card">
+              <div class="landing-info-icon">01</div>
+              <h3>Parse &amp; Analyze</h3>
+              <p>Every resume is automatically parsed and run through a full ATS analysis — scoring, keyword coverage, and formatting checks — the moment it arrives.</p>
+            </div>
+            <div class="landing-info-card">
+              <div class="landing-info-icon">02</div>
+              <h3>Match &amp; Rank</h3>
+              <p>Candidates are scored against every open role using a transparent, explainable matching engine — skills, experience, education, and more.</p>
+            </div>
+            <div class="landing-info-card">
+              <div class="landing-info-icon">03</div>
+              <h3>Move &amp; Close</h3>
+              <p>Drag candidates through your pipeline, automate outreach, track compliance, and report on it all without leaving the app.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="landing-section landing-section-alt" id="landingWhyUs">
+          <div class="landing-section-head">
+            <span class="landing-eyebrow">Why Choose Us</span>
+            <h2>Built for recruiting teams, not generic HR software</h2>
+          </div>
+          <div class="landing-grid-4">
+            <div class="landing-why-card"><strong>Explainable AI</strong><p>Every match score comes with a breakdown, not a black box.</p></div>
+            <div class="landing-why-card"><strong>Built-in ATS analysis</strong><p>Know exactly why a resume will or won't clear an ATS filter.</p></div>
+            <div class="landing-why-card"><strong>Role-based access</strong><p>Admins, recruiters, hiring managers, and account managers each see exactly what they need.</p></div>
+            <div class="landing-why-card"><strong>No lock-in complexity</strong><p>One clean workspace — no bloated modules you'll never use.</p></div>
+          </div>
+        </section>
+
+        <section class="landing-section" id="landingFeatures">
+          <div class="landing-section-head">
+            <span class="landing-eyebrow">Key Features</span>
+            <h2>Everything a modern recruiting team needs</h2>
+          </div>
+          <div class="landing-feature-grid">
+            <div class="landing-feature-card"><span class="landing-feature-icon">RP</span><strong>AI Resume Parsing</strong><p>Extract structured candidate data from any resume format in seconds.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">AT</span><strong>ATS Resume Analysis</strong><p>A full ATS-readiness report for every resume — score, gaps, and fixes.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">CM</span><strong>Intelligent Candidate Matching</strong><p>Weighted, explainable scoring across skills, experience, and education.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">RK</span><strong>AI Candidate Ranking</strong><p>Automatically rank and shortlist your strongest candidates per role.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">CT</span><strong>Compliance Tracking</strong><p>Document expiry reminders and verification workflows, built in.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">IN</span><strong>Resume Inbox</strong><p>A single, searchable home for every resume that comes through the door.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">OA</span><strong>Outreach Automation</strong><p>AI-drafted, personalized candidate outreach at scale.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">PL</span><strong>Pipeline Management</strong><p>Drag-and-drop stages with full audit history on every move.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">IA</span><strong>AI Interview Assistance</strong><p>AI-generated insights to help prep for and evaluate interviews.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">RA</span><strong>Reports &amp; Analytics</strong><p>Exportable, role-aware reporting across your entire hiring funnel.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">RB</span><strong>Role-Based Access Control</strong><p>Fine-grained permissions across every module, not just the sidebar.</p></div>
+            <div class="landing-feature-card"><span class="landing-feature-icon">ES</span><strong>Enterprise Security</strong><p>Rate limiting, audit logging, and per-user data isolation by default.</p></div>
+          </div>
+        </section>
+
+        <section class="landing-section landing-section-alt" id="landingAi">
+          <div class="landing-section-head">
+            <span class="landing-eyebrow">AI Capabilities</span>
+            <h2>AI that shows its work</h2>
+            <p>ATS Intelligence answers questions about your pipeline in plain language, drafts outreach, summarizes resumes, and explains every match score — so recruiters spend less time digging and more time talking to candidates.</p>
+          </div>
+          <div class="landing-grid-3">
+            <div class="landing-info-card"><div class="landing-info-icon">AI</div><h3>Conversational insights</h3><p>Ask "who are my top candidates for the Senior React role" and get a real answer, grounded in your data.</p></div>
+            <div class="landing-info-card"><div class="landing-info-icon">AI</div><h3>Resume-aware analysis</h3><p>ATS scoring, missing keywords, and rewrite suggestions generated directly from the parsed resume text.</p></div>
+            <div class="landing-info-card"><div class="landing-info-icon">AI</div><h3>Private by design</h3><p>Every AI conversation is scoped to the recruiter who started it — never shared across your team.</p></div>
+          </div>
+        </section>
+
+        <section class="landing-section" id="landingWorkflow">
+          <div class="landing-section-head">
+            <span class="landing-eyebrow">Recruitment Workflow</span>
+            <h2>From resume to hire, fully tracked</h2>
+          </div>
+          <div class="landing-workflow">
+            <div class="landing-workflow-step"><span>1</span><strong>Upload Resume</strong></div>
+            <div class="landing-workflow-arrow">→</div>
+            <div class="landing-workflow-step"><span>2</span><strong>AI Resume Parsing</strong></div>
+            <div class="landing-workflow-arrow">→</div>
+            <div class="landing-workflow-step"><span>3</span><strong>ATS Analysis</strong></div>
+            <div class="landing-workflow-arrow">→</div>
+            <div class="landing-workflow-step"><span>4</span><strong>Candidate Matching</strong></div>
+            <div class="landing-workflow-arrow">→</div>
+            <div class="landing-workflow-step"><span>5</span><strong>Recruiter Review</strong></div>
+            <div class="landing-workflow-arrow">→</div>
+            <div class="landing-workflow-step"><span>6</span><strong>Interview</strong></div>
+            <div class="landing-workflow-arrow">→</div>
+            <div class="landing-workflow-step"><span>7</span><strong>Offer</strong></div>
+            <div class="landing-workflow-arrow">→</div>
+            <div class="landing-workflow-step landing-workflow-final"><span>8</span><strong>Hiring</strong></div>
+          </div>
+        </section>
+
+        <section class="landing-section landing-section-alt" id="landingSecurity">
+          <div class="landing-section-head">
+            <span class="landing-eyebrow">Security &amp; Privacy</span>
+            <h2>Enterprise-grade by default</h2>
+          </div>
+          <div class="landing-grid-4">
+            <div class="landing-why-card"><strong>Rate limiting</strong><p>Per-IP request limits on every endpoint, tighter on authentication.</p></div>
+            <div class="landing-why-card"><strong>Role-based enforcement</strong><p>Every permission is checked on both the UI and the API — not just the sidebar.</p></div>
+            <div class="landing-why-card"><strong>Full audit trail</strong><p>Every edit, upload, and settings change is logged and reviewable by admins.</p></div>
+            <div class="landing-why-card"><strong>Data isolation</strong><p>Private data — AI chats, preferences, profile info — never leaks across users.</p></div>
+          </div>
+        </section>
+
+        <section class="landing-section" id="landingTestimonials">
+          <div class="landing-section-head">
+            <span class="landing-eyebrow">Testimonials</span>
+            <h2>What teams are saying</h2>
+          </div>
+          <div class="landing-grid-3">
+            <div class="landing-testimonial"><p>"We cut our time-to-shortlist by more than half in the first month."</p><strong>— Talent Acquisition Lead</strong></div>
+            <div class="landing-testimonial"><p>"The ATS analysis alone has saved our candidates from getting filtered out for silly formatting issues."</p><strong>— Senior Recruiter</strong></div>
+            <div class="landing-testimonial"><p>"Finally a match score I can actually explain to a hiring manager."</p><strong>— Account Manager</strong></div>
+          </div>
+          <p class="landing-testimonial-note">Placeholder quotes for demonstration purposes.</p>
+        </section>
+
+        <section class="landing-section landing-section-alt" id="landingPricing">
+          <div class="landing-section-head">
+            <span class="landing-eyebrow">Pricing</span>
+            <h2>Talk to us about your team</h2>
+            <p>Pricing is configured per organization. Reach out below and we'll set up your workspace.</p>
+          </div>
+        </section>
+
+        <section class="landing-section" id="landingAbout">
+          <div class="landing-section-head">
+            <span class="landing-eyebrow">About</span>
+            <h2>Built by people who've worked recruiting desks</h2>
+            <p>ASJ Recruitment ATS was built to close the gap between generic HR software and what recruiting teams actually need day to day: fast parsing, honest match scores, and a pipeline view that doesn't get in the way.</p>
+          </div>
+        </section>
+      </main>
+
+      <footer class="landing-footer" id="landingContact">
+        <div class="landing-footer-inner">
+          <div class="landing-footer-brand">
+            <div class="brand-mark">A</div>
+            <div>
+              <strong>ASJ Recruitment ATS</strong>
+              <span>AI hiring workspace</span>
+            </div>
+          </div>
+          <div class="landing-footer-links">
+            <div>
+              <strong>Product</strong>
+              <a href="#landingFeatures">Features</a>
+              <a href="#landingAi">AI Capabilities</a>
+              <a href="#landingWorkflow">Workflow</a>
+            </div>
+            <div>
+              <strong>Company</strong>
+              <a href="#landingAbout">About</a>
+              <a href="#landingSecurity">Security</a>
+            </div>
+            <div>
+              <strong>Contact</strong>
+              <a href="mailto:support@asjats.com">support@asjats.com</a>
+            </div>
+          </div>
+        </div>
+        <div class="landing-footer-bottom">© 2026 ASJ Recruitment Solutions. All rights reserved.</div>
+      </footer>
+    </div>
+
+    <div id="loginScreen" class="login-screen" hidden>
+      <div class="login-panel">
+        <div class="login-panel-inner">
+          <button type="button" class="back-to-landing" data-back-to-landing>← Back to home</button>
+          <form id="loginForm" class="login-card" novalidate>
+          <div class="login-brand">
+            <div class="brand-mark">A</div>
+            <div>
+              <strong>ASJ Recruitment ATS</strong>
+              <span>AI hiring workspace</span>
+            </div>
+          </div>
+          <h2 id="loginHeading">Sign in</h2>
+          <p id="loginSub" class="login-sub">Enter your work email to continue.</p>
+
+          <label class="login-field">
+            <span>Email</span>
+            <input id="loginEmail" type="email" placeholder="you@company.com" autocomplete="email" required />
+          </label>
+          <label id="loginNameGroup" class="login-field" hidden>
+            <span>Name</span>
+            <input id="loginName" placeholder="Your full name" autocomplete="name" />
+          </label>
+          <label id="loginRoleGroup" class="login-field" hidden>
+            <span>Role</span>
+            <select id="loginRole" disabled>
+              <option value="recruiter">Recruiter</option>
+              <option value="account_manager">Account Manager</option>
+              <option value="hiring_manager">Hiring Manager</option>
+              <option value="viewer">Viewer</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <label id="loginPasswordGroup" class="login-field login-password-field" hidden>
+            <span id="loginPasswordLabel">Password</span>
+            <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password" disabled />
+            <button type="button" class="login-password-toggle" data-toggle-password="loginPassword" tabindex="-1">Show</button>
+          </label>
+          <label id="loginPasswordConfirmGroup" class="login-field login-password-field" hidden>
+            <span>Confirm password</span>
+            <input id="loginPasswordConfirm" type="password" placeholder="••••••••" autocomplete="new-password" disabled />
+            <button type="button" class="login-password-toggle" data-toggle-password="loginPasswordConfirm" tabindex="-1">Show</button>
+          </label>
+          <p id="loginError" class="login-error" hidden></p>
+          <button id="loginSubmit" type="submit" class="primary login-submit">
+            <span class="login-submit-label">Continue</span>
+            <span class="login-submit-spinner" hidden></span>
+          </button>
+          <button id="loginBack" type="button" class="login-link" hidden>Use a different email</button>
+        </form>
+        </div>
+      </div>
     </div>
     <script src="/app.js"></script>
   </body>

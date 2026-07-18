@@ -12,6 +12,52 @@ import express from "express";
 import { importJobFromUrl } from "./jobImporter.js";
 import authRoutes from "./routes/authRoutes.js";
 import usersRoutes from "./routes/usersRoutes.js";
+import { verifyToken, AUTH_COOKIE_NAME } from "./utils/jwt.js";
+import { findUserById } from "./models/userModel.js";
+import { canEdit as roleCanEdit, canView as roleCanView, moduleForApiPath, SETTINGS_CATEGORIES } from "./rbac.js";
+import { matchCandidateToJob, matchCandidateToJobSync, rankMatches } from "./matching/index.js";
+import { SCORE_WEIGHTS } from "./matching/scoreAggregator.js";
+import { analyzeResume } from "./matching/atsAnalyzer.js";
+
+// Computes (or recomputes) the ATS analysis report for one candidate and caches it on
+// the candidate record. Picks the best-matching open job (if any) as job context for the
+// job-relevance-dependent metrics, without creating pipeline applications the way
+// assignCandidateToBestJobs does -- this is a read-only analysis, not a matching action.
+function refreshAtsReport(db, candidate) {
+  const openJobs = db.jobs.filter((job) => job.status === "open");
+  const best = openJobs.length
+    ? rankMatches(openJobs.map((job) => ({ job, ...scoreMatch(candidate, job, db) })))[0]
+    : null;
+  candidate.atsReport = analyzeResume(candidate, best ? best.job : null);
+  return candidate.atsReport;
+}
+
+// Converts the simplified 6-slider weight model shown in AI Settings into the matching
+// engine's full 9-component weight table. requiredSkills/preferredSkills split from the
+// single "skills" slider at the same 75/25 ratio as the spec default (30:10), and
+// roleSimilarity/resumeQuality stay fixed at their spec values (5 each) since they
+// aren't exposed as sliders -- the other six are scaled to fill the remaining budget.
+function matchWeightsFromSettings(db) {
+  const configured = db.settings?.ai?.matchWeights;
+  if (!configured) return undefined; // caller falls back to the built-in SCORE_WEIGHTS
+  const { skills = 40, experience = 25, education = 10, certifications = 10, projects = 10, semantic = 5 } = configured;
+  const total = skills + experience + education + certifications + projects + semantic;
+  if (!total) return undefined;
+  const fixed = SCORE_WEIGHTS.roleSimilarity + SCORE_WEIGHTS.resumeQuality; // 10
+  const budget = 100 - fixed; // 90
+  const scale = budget / total;
+  return {
+    requiredSkills: skills * scale * 0.75,
+    preferredSkills: skills * scale * 0.25,
+    experience: experience * scale,
+    education: education * scale,
+    projects: projects * scale,
+    certifications: certifications * scale,
+    roleSimilarity: SCORE_WEIGHTS.roleSimilarity,
+    resumeQuality: SCORE_WEIGHTS.resumeQuality,
+    semantic: semantic * scale
+  };
+}
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = resolve(__dirname, "..");
@@ -98,6 +144,47 @@ function handleAuthRequest(req, res) {
   });
 }
 
+// The /api/* routes below are handled by the raw http server rather than the Express
+// authApp, so they don't get cookie-parser or requireAuth for free. This re-implements
+// just enough of that (cookie parsing + JWT verification + a fresh DB lookup) so every
+// API route -- not just /auth and /api/users -- requires a valid session and respects
+// each user's role.
+function parseCookieHeader(header) {
+  const out = {};
+  if (!header) return out;
+  for (const pair of header.split(";")) {
+    const index = pair.indexOf("=");
+    if (index === -1) continue;
+    const key = pair.slice(0, index).trim();
+    if (!key) continue;
+    try {
+      out[key] = decodeURIComponent(pair.slice(index + 1).trim());
+    } catch {
+      out[key] = pair.slice(index + 1).trim();
+    }
+  }
+  return out;
+}
+
+async function authenticateApiRequest(req) {
+  const token = parseCookieHeader(req.headers.cookie)[AUTH_COOKIE_NAME];
+  if (!token) return null;
+  let payload;
+  try {
+    payload = verifyToken(token);
+  } catch {
+    return null;
+  }
+  try {
+    const user = await findUserById(payload.sub);
+    if (!user || user.status === "disabled") return null;
+    return user;
+  } catch (error) {
+    console.error("[auth] could not load user for API request:", error.message);
+    return null;
+  }
+}
+
 function loadEnv() {
   for (const file of [resolve(ROOT, ".env"), resolve(ROOT, "../.env")]) {
     if (!existsSync(file)) continue;
@@ -117,11 +204,186 @@ function loadEnv() {
   }
 }
 
+const SETTINGS_LABELS = {
+  profile: "Profile", company: "Company", clients: "Client", users: "User & Role",
+  recruitment: "Recruitment", resumeParsing: "Resume Parsing", ai: "AI", email: "Email & Notifications",
+  notifications: "Notification", compliance: "Compliance", integrations: "Integrations",
+  security: "Security", storage: "File & Storage", reports: "Reports & Export",
+  appearance: "Appearance", system: "System"
+};
+
+// Deliberately simple, dependency-free validation: every incoming field must already
+// exist in that category's defaults (no arbitrary key injection) and must roughly match
+// the type of its default value. This is enough to stop obviously malformed writes
+// without hand-writing a bespoke schema per category.
+function validateSettingsPatch(category, body) {
+  const defaults = defaultSettings()[category];
+  if (!defaults) return `Unknown settings category: ${category}`;
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "Request body must be an object";
+  for (const [key, value] of Object.entries(body)) {
+    if (!(key in defaults)) return `Unknown setting: ${key}`;
+    const expected = defaults[key];
+    if (expected !== null && typeof expected === "object" && !Array.isArray(expected)) {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return `${key} must be an object`;
+      continue; // shallow-check nested objects (e.g. matchWeights, integrations.*)
+    }
+    if (Array.isArray(expected)) {
+      if (!Array.isArray(value)) return `${key} must be a list`;
+      continue;
+    }
+    if (typeof expected === "number" && (typeof value !== "number" || Number.isNaN(value))) return `${key} must be a number`;
+    if (typeof expected === "boolean" && typeof value !== "boolean") return `${key} must be true or false`;
+    if (typeof expected === "string" && typeof value !== "string") return `${key} must be text`;
+  }
+  return null;
+}
+
+function mergeSettingsPatch(current, body) {
+  const next = { ...current };
+  for (const [key, value] of Object.entries(body)) {
+    if (value !== null && typeof value === "object" && !Array.isArray(value) && next[key] && typeof next[key] === "object") {
+      next[key] = { ...next[key], ...value };
+    } else {
+      next[key] = value;
+    }
+  }
+  return next;
+}
+
+function defaultSettings() {
+  return {
+    company: {
+      companyName: "ASJ Recruitment Solutions",
+      logoUrl: "",
+      website: "https://www.asjats.com",
+      supportEmail: "support@asjats.com",
+      phone: "",
+      address: "",
+      timezone: "Asia/Kolkata",
+      workingDays: ["Mon", "Tue", "Wed", "Thu", "Fri"],
+      workingHoursStart: "09:00",
+      workingHoursEnd: "18:00",
+      brandColor: "#0d9488"
+    },
+    clients: {
+      defaultClientOwner: "",
+      clientPortalEnabled: false,
+      clientBillingContact: "",
+      clientNotesVisibleToClient: false
+    },
+    recruitment: {
+      pipelineStages: ["Applied", "Matched Candidates", "Interview", "Awaiting Decision", "Final Decision"],
+      candidateStatuses: ["New", "In Review", "Shortlisted", "Interviewing", "Offered", "Hired", "Rejected", "Withdrawn"],
+      jobTemplates: [
+        { id: "tmpl_default", name: "Standard Job Post", body: "We are hiring for {{role}}. {{description}}" }
+      ],
+      offerTemplates: [
+        { id: "offer_default", name: "Standard Offer Letter", body: "Dear {{name}}, we are pleased to offer you the position of {{role}}." }
+      ],
+      autoAdvanceOnHighMatch: false,
+      minMatchScoreForAutoShortlist: 75
+    },
+    resumeParsing: {
+      supportedFormats: [".pdf", ".doc", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".gif"],
+      ocrEnabled: true,
+      duplicateDetection: true,
+      duplicateMatchThreshold: 90,
+      autoParseOnUpload: true
+    },
+    ai: {
+      provider: process.env.COHERE_API_KEY ? "cohere" : "local",
+      apiKeyConfigured: Boolean(process.env.COHERE_API_KEY),
+      matchWeights: { skills: 40, experience: 25, education: 10, certifications: 10, projects: 10, semantic: 5 },
+      aiOutreachDrafting: true,
+      aiResumeSummaries: true,
+      aiMatchExplanations: true
+    },
+    email: {
+      smtpHost: "",
+      smtpPort: 587,
+      smtpUser: "",
+      smtpSecure: true,
+      fromName: "ASJ Recruitment Team",
+      fromEmail: "",
+      templates: [
+        { id: "tmpl_invite", name: "Interview Invite", subject: "Interview Invitation", body: "Hi {{name}}, we'd like to invite you to interview for {{role}}." },
+        { id: "tmpl_reject", name: "Rejection", subject: "Update on your application", body: "Hi {{name}}, thank you for your interest in {{role}}." }
+      ]
+    },
+    notifications: {
+      emailOnNewCandidate: true,
+      emailOnStageChange: true,
+      emailOnInterviewScheduled: true,
+      digestFrequency: "daily",
+      inAppNotifications: true
+    },
+    compliance: {
+      documentTypes: ["Government ID", "Work Visa", "Background Check", "Reference Letter", "Signed Offer"],
+      expiryReminderDays: 30,
+      requireVerificationBeforeOffer: true
+    },
+    integrations: {
+      googleCalendar: { connected: false },
+      outlook: { connected: false },
+      teams: { connected: false },
+      zoom: { connected: false },
+      linkedin: { connected: false },
+      webhooks: []
+    },
+    security: {
+      passwordMinLength: 8,
+      passwordRequireNumber: true,
+      passwordRequireSymbol: true,
+      passwordRequireUppercase: true,
+      sessionTimeoutMinutes: 60,
+      ipAllowlist: [],
+      mfaRequiredForAdmins: false
+    },
+    storage: {
+      maxUploadSizeMb: 10,
+      maxBulkUploadSizeMb: 1024,
+      allowedFileTypes: [".pdf", ".doc", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".gif"],
+      storageProvider: "local"
+    },
+    reports: {
+      defaultExportFormat: "csv",
+      includeArchivedInExports: false,
+      scheduledReports: []
+    },
+    appearance: {
+      theme: "light",
+      language: "en",
+      dateFormat: "DD/MM/YYYY",
+      timeFormat: "24h"
+    },
+    system: {
+      maintenanceMode: false,
+      maintenanceMessage: "",
+      lastBackupAt: ""
+    }
+  };
+}
+
 function ensureBetaCollections(db) {
   db.outreachLog ||= [];
+  db.outreachFollowups ||= [];
   db.aiChats ||= [];
   db.deletedCandidates ||= [];
   db.websiteResumes ||= [];
+  db.notificationReads ||= {}; // { [userId]: [activityId, ...] }
+  db.settings ||= defaultSettings();
+  // Backfill any settings categories added in later versions of the app onto older db.json files.
+  const defaults = defaultSettings();
+  for (const category of Object.keys(defaults)) {
+    db.settings[category] = { ...defaults[category], ...(db.settings[category] || {}) };
+  }
+  db.settingsAudit ||= []; // [{ id, category, field, before, after, actorId, actorName, at }]
+  db.userProfiles ||= {}; // { [userId]: { phone, photoUrl } } -- extra profile fields not owned by userModel.js
+  // Targeted, admin-triggered notifications for a specific user (e.g. "your role was
+  // changed") -- separate from computeNotifications' auto-derived feed since events
+  // like role/permission changes happen in routes/usersRoutes.js, which isn't part of
+  // this package; this queue is the integration point for that (see POST /api/user-notifications).
+  db.directNotifications ||= []; // [{ id, userId, category, title, message, targetView, createdAt }]
   for (const resume of db.websiteResumes) {
     resume.queueStatus ||= resume.processed ? "Parsed" : resume.extractionQuality === "poor" ? "Failed" : resume.resumeText ? "Uploaded" : "Uploaded";
   }
@@ -130,6 +392,10 @@ function ensureBetaCollections(db) {
     job.clearance ||= "No clearance";
     job.startDate ||= "";
     job.closingDate ||= "";
+  }
+  for (const candidate of db.candidates || []) {
+    candidate.complianceDocuments ||= [];
+    candidate.tags ||= [];
   }
   return db;
 }
@@ -146,15 +412,75 @@ function id(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// Allowed browser origins for the raw (non-Express) /api/* handler below. These
+// endpoints authenticate with an httpOnly session cookie, so echoing back "*" here
+// (the previous behavior) combined with credentialed requests is a cross-origin data
+// exposure risk -- a malicious page could otherwise ride the logged-in user's cookie
+// against these endpoints. CORS_ORIGIN can be a single origin or a comma-separated list;
+// same-origin requests (no Origin header, e.g. curl/server-to-server) are always allowed.
+const ALLOWED_ORIGINS = String(process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+function resolveAllowedOrigin(req) {
+  const origin = req?.headers?.origin;
+  if (!origin) return "";
+  if (!ALLOWED_ORIGINS.length) return origin; // no explicit allowlist configured (e.g. local dev)
+  return ALLOWED_ORIGINS.includes(origin) ? origin : "";
+}
+
+// CORS + security headers are applied once per request in handleRequest (via
+// applySecurityHeaders below) rather than duplicated on every json(...) call site.
 function json(res, status, body) {
-  res.writeHead(status, {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Content-Type": "application/json"
-  });
+  res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
 }
+
+function applySecurityHeaders(req, res) {
+  const allowedOrigin = resolveAllowedOrigin(req);
+  if (allowedOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+}
+
+// ── Rate limiting ────────────────────────────────────────────────────────
+// Simple in-memory sliding-window limiter per client IP. This is a single-process
+// app (no shared cache/Redis available), so an in-memory map is the pragmatic choice;
+// if this is ever deployed behind multiple instances, swap this for a shared store.
+const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
+const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX || 240); // general API traffic
+const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX || 20); // login/auth is far more brute-forceable
+const rateLimitBuckets = new Map();
+
+function clientIp(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwarded || req.socket?.remoteAddress || "unknown";
+}
+
+function checkRateLimit(key, max) {
+  const now = Date.now();
+  const bucket = rateLimitBuckets.get(key) || [];
+  const recent = bucket.filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS);
+  recent.push(now);
+  rateLimitBuckets.set(key, recent);
+  return recent.length <= max;
+}
+
+// Periodically drop empty/stale buckets so this map can't grow without bound.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateLimitBuckets) {
+    if (!bucket.some((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS)) rateLimitBuckets.delete(key);
+  }
+}, RATE_LIMIT_WINDOW_MS).unref?.();
 
 function readJson(req) {
   return new Promise((resolveBody, reject) => {
@@ -752,6 +1078,70 @@ function publicState(db) {
   };
 }
 
+// ── Compliance ───────────────────────────────────────────────────────────
+const COMPLIANCE_DOCUMENT_TYPES = ["Passport", "Visa", "Work Authorization", "Security Clearance", "Police Verification", "Certification", "Other"];
+const COMPLIANCE_EXPIRY_WARNING_DAYS = 30;
+const ALLOWED_COMPLIANCE_EXTENSIONS = new Set([".pdf", ".doc", ".docx", ".png", ".jpg", ".jpeg", ".webp"]);
+
+// A document counts as "expired" the moment its expiry date passes, regardless of what
+// status it was last set to -- this is computed live rather than stored, so a document
+// verified 11 months ago against a 1-year visa correctly flips to expired on its own
+// without needing a background job to go update it.
+function documentEffectiveStatus(doc) {
+  if (doc.expiryDate) {
+    const expiry = new Date(doc.expiryDate);
+    if (!Number.isNaN(expiry.valueOf()) && expiry.getTime() < Date.now()) return "expired";
+  }
+  return doc.status || "submitted";
+}
+
+function documentIsExpiringSoon(doc) {
+  if (!doc.expiryDate) return false;
+  const expiry = new Date(doc.expiryDate);
+  if (Number.isNaN(expiry.valueOf())) return false;
+  const daysLeft = (expiry.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+  return daysLeft >= 0 && daysLeft <= COMPLIANCE_EXPIRY_WARNING_DAYS;
+}
+
+// Rolls a candidate's documents up into one overall status for the compliance dashboard:
+// no documents at all -> missing; any expired -> expired (worst case wins); any flagged
+// for manual review -> review_required; all verified -> verified; otherwise -> pending
+// (submitted but nothing's been checked yet).
+function candidateComplianceStatus(candidate) {
+  const docs = candidate.complianceDocuments || [];
+  if (!docs.length) return "missing";
+  const statuses = docs.map(documentEffectiveStatus);
+  if (statuses.includes("expired")) return "expired";
+  if (statuses.includes("review_required")) return "review_required";
+  if (statuses.every((status) => status === "verified")) return "verified";
+  return "pending";
+}
+
+function candidateHasExpiringDocument(candidate) {
+  return (candidate.complianceDocuments || []).some(documentIsExpiringSoon);
+}
+
+function complianceSummary(db) {
+  const summary = { verified: 0, pending: 0, missing: 0, expired: 0, expiringSoon: 0 };
+  for (const candidate of db.candidates) {
+    const status = candidateComplianceStatus(candidate);
+    if (status === "verified") summary.verified += 1;
+    else if (status === "expired") summary.expired += 1;
+    else if (status === "missing") summary.missing += 1;
+    else summary.pending += 1; // pending + review_required both count as "needs attention"
+    if (candidateHasExpiringDocument(candidate)) summary.expiringSoon += 1;
+  }
+  return summary;
+}
+
+function findComplianceDocument(db, documentId) {
+  for (const candidate of db.candidates) {
+    const doc = (candidate.complianceDocuments || []).find((item) => item.id === documentId);
+    if (doc) return { candidate, doc };
+  }
+  return null;
+}
+
 function resumeDiskPath(resume) {
   if (resume.sourcePath && existsSync(resume.sourcePath)) return resume.sourcePath;
   if (resume.resumeUrl?.startsWith("/uploads/")) {
@@ -786,6 +1176,7 @@ function updateCandidateFromResume(db, resume) {
     parseConfidence: parsed.parseConfidence,
     parsedBy: parsed.parsedBy
   });
+  refreshAtsReport(db, candidate);
   return true;
 }
 
@@ -1039,24 +1430,23 @@ async function parseResumeWithAi(resume, db) {
   }
 }
 
-function scoreMatch(candidate, job) {
-  const candidateSkills = new Set((candidate.skills || []).map((skill) => skill.toLowerCase()));
-  const required = job.skills || [];
-  const matched = required.filter((skill) => candidateSkills.has(skill.toLowerCase()));
-  const skillGaps = required.filter((skill) => !candidateSkills.has(skill.toLowerCase()));
-  const skillScore = required.length ? matched.length / required.length : 0.5;
-  const expBonus = Math.min((candidate.experienceYears || 0) / 8, 1) * 12;
-  const jobText = normalize(`${job.title} ${job.description} ${(job.skills || []).join(" ")}`);
-  const roleBonus = candidate.roleCategory && normalize(candidate.roleCategory).split(/[ /-]/).some((part) => part && jobText.includes(part)) ? 8 : 0;
-  const eligibilityBonus = (candidate.eligibleRoles || []).some((role) => jobText.includes(normalize(role).split(/\s+/)[0])) ? 5 : 0;
-  const score = Math.min(98, Math.round(skillScore * 75 + expBonus + roleBonus + eligibilityBonus));
-  const recommendation = score >= 85 ? "top candidate" : score >= 70 ? "eligible" : score >= 55 ? "possible fit" : "not recommended";
-  return { matchScore: score, skillGaps, matchedSkills: matched, recommendation };
+// scoreMatch() used to contain the entire matching formula inline (flat skill-string
+// comparison, years/8 experience bonus, and a couple of flat role-keyword bonuses -- see
+// git history if you need to compare). It's now a thin synchronous wrapper around the
+// modular scoring engine in ./matching/, which every existing call site below keeps
+// using exactly as before since the return shape (matchScore/matchedSkills/skillGaps/
+// recommendation) is unchanged -- it just now also carries a `breakdown` field with the
+// full explainable score. This sync path never calls the semantic-similarity API (that
+// would mean a network round-trip for every candidate x job pair in every dashboard
+// load) -- see GET /api/candidates/:candidateId/match/:jobId below for the full version
+// with real semantic matching included, computed on demand for one pair at a time.
+function scoreMatch(candidate, job, db) {
+  return matchCandidateToJobSync(candidate, job, db ? matchWeightsFromSettings(db) : undefined);
 }
 
 function refreshJobApplications(db, job) {
   for (const candidate of db.candidates.filter((item) => item.status === "active")) {
-    const match = scoreMatch(candidate, job);
+    const match = scoreMatch(candidate, job, db);
     const existing = db.applications.find((app) => app.candidateId === candidate.id && app.jobId === job.id);
     if (existing) {
       existing.matchScore = match.matchScore;
@@ -1097,7 +1487,14 @@ function hydrate(db) {
     candidate: candidatesById[app.candidateId],
     job: jobsById[app.jobId]
   }));
-  return { ...db, jobs: Object.values(jobsById), applications };
+  // These collections are private/sensitive and are each already served through their
+  // own access-controlled endpoint (aiChats -> /api/ai-insight, filtered by ownerId;
+  // settings -> /api/settings/:category, filtered by role incl. SMTP credentials and
+  // security policy; userProfiles -> /api/settings/profile, per-user; settingsAudit ->
+  // /api/settings-audit, admin-only; notificationReads -> /api/notifications). Spreading
+  // the raw db here would hand all of that to every logged-in user regardless of role.
+  const { aiChats, settings, userProfiles, settingsAudit, notificationReads, activities, ...sharedDb } = db;
+  return { ...sharedDb, jobs: Object.values(jobsById), applications };
 }
 
 function dashboard(db) {
@@ -1137,6 +1534,7 @@ function upsertCandidate(db, parsed, duplicateAction = "skip") {
       parsed.duplicateOf = duplicate.id;
       parsed.duplicateReason = `Updated profile detected. New skills: ${newSkills.join(", ") || "resume text changed"}.`;
       db.candidates.push(parsed);
+      refreshAtsReport(db, parsed);
       return { candidate: parsed, duplicate: true, renamed: true, changed, newSkills };
     }
     if (duplicateAction === "skip") {
@@ -1150,17 +1548,18 @@ function upsertCandidate(db, parsed, duplicateAction = "skip") {
       createdAt: duplicate.createdAt || parsed.createdAt,
       updatedAt: new Date().toISOString()
     });
+    refreshAtsReport(db, duplicate);
     return { candidate: duplicate, duplicate: true, changed, newSkills };
   }
 
   db.candidates.push(parsed);
+  refreshAtsReport(db, parsed);
   return { candidate: parsed, duplicate: false };
 }
 
 function assignCandidateToBestJobs(db, candidate, preferredJobId = "") {
   const openJobs = db.jobs.filter((job) => job.status === "open");
-  const ranked = openJobs.map((job) => ({ job, ...scoreMatch(candidate, job) }))
-    .sort((a, b) => b.matchScore - a.matchScore);
+  const ranked = rankMatches(openJobs.map((job) => ({ job, ...scoreMatch(candidate, job, db) })));
 
   const preferred = preferredJobId ? ranked.find((item) => item.job.id === preferredJobId) : null;
   const selected = uniq([preferred, ...ranked.filter((item) => item.matchScore >= 60)].filter(Boolean).slice(0, 3));
@@ -1192,7 +1591,7 @@ function addCandidateToJob(db, candidateId, jobId, stage = "Applied") {
   const candidate = db.candidates.find((item) => item.id === candidateId);
   const job = db.jobs.find((item) => item.id === jobId);
   if (!candidate || !job) throw new Error("Candidate or job was not found.");
-  const match = scoreMatch(candidate, job);
+  const match = scoreMatch(candidate, job, db);
   const existing = db.applications.find((app) => app.candidateId === candidateId && app.jobId === jobId);
   if (existing) {
     existing.stage = STAGES.includes(stage) ? stage : existing.stage;
@@ -1449,8 +1848,20 @@ function updateResumeReview(db, resumeId, body) {
     resume.parser = "manual-review";
     resume.extractionQuality = scoreExtractionQuality(resume.resumeText);
     resume.needsReview = resume.extractionQuality === "poor";
-    resume.processed = false;
-    delete resume.candidateId;
+    if (resume.candidateId) {
+      // Previously this deleted resume.candidateId and set processed = false,
+      // which orphaned the existing candidate record until someone manually
+      // clicked "Re-read Uploaded Files". That meant edits made here (name,
+      // details, etc.) were invisible everywhere else (Candidate Management,
+      // Pipeline, Outreach...) until that manual reparse. Instead, keep the
+      // link and push the corrected text straight into the linked candidate now.
+      resume.processed = updateCandidateFromResume(db, resume);
+    } else {
+      // Never linked to a candidate yet (e.g. still queued) -- let the normal
+      // processing pipeline pick it up rather than trying to link it here.
+      resume.processed = false;
+      enqueueResumeProcessing();
+    }
   }
   if (typeof body.fileName === "string" && body.fileName.trim()) {
     resume.fileName = body.fileName.trim();
@@ -1469,8 +1880,7 @@ function talentRecommendations(db) {
   const openJobs = hydrated.jobs.filter((job) => job.status === "open");
   const candidates = hydrated.candidates.filter((candidate) => candidate.status === "active");
   const jobMatches = openJobs.map((job) => {
-    const matches = candidates.map((candidate) => ({ candidate, ...scoreMatch(candidate, job) }))
-      .sort((a, b) => b.matchScore - a.matchScore)
+    const matches = rankMatches(candidates.map((candidate) => ({ candidate, ...scoreMatch(candidate, job, db) })))
       .slice(0, 5);
     return {
       jobId: job.id,
@@ -1489,7 +1899,7 @@ function talentRecommendations(db) {
   });
 
   const topCandidates = candidates.map((candidate) => {
-    const best = openJobs.map((job) => ({ job, ...scoreMatch(candidate, job) })).sort((a, b) => b.matchScore - a.matchScore)[0];
+    const best = rankMatches(openJobs.map((job) => ({ job, ...scoreMatch(candidate, job, db) })))[0];
     return {
       candidateId: candidate.id,
       name: candidate.name,
@@ -1736,6 +2146,182 @@ async function sendSmtpEnvelope(socket, { from, to, subject, message }) {
   return { status: "sent", detail: "Sent through configured SMTP provider." };
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Notifications are computed live from actual data each time they're requested (not
+// stored) -- this keeps them honest: nothing here is a canned/fake alert, and there's
+// nothing to keep in sync with the records they describe. IDs are derived from the
+// source record so "mark as read" (tracked in db.notificationReads) stays stable
+// across requests even though the list itself is recomputed every time.
+function computeNotifications(db, currentUser) {
+  const notifications = [];
+  const now = Date.now();
+  const candidateById = new Map(db.candidates.map((c) => [c.id, c]));
+  const jobById = new Map(db.jobs.map((j) => [j.id, j]));
+  const isAdmin = currentUser.role === "admin";
+  // Non-admins only see job/pipeline-related notifications for jobs assigned to them.
+  // Legacy jobs created before assignment tracking existed (assignedRecruiterId unset)
+  // fall back to visible-to-everyone-with-jobs-access, rather than disappearing for
+  // everyone -- otherwise pre-existing data would look like it vanished.
+  const isJobRelevant = (job) => isAdmin || !job.assignedRecruiterId || job.assignedRecruiterId === currentUser.id;
+
+  // Resume parsing completed (last 3 days) -- relevant to anyone who can see Resume Management
+  if (roleCanView(currentUser.role, "inbox")) {
+    db.websiteResumes.forEach((resume) => {
+      if (!resume.processed || !resume.candidateId) return;
+      const ts = resume.reparsedAt || resume.processedAt || resume.reviewedAt || resume.submittedAt;
+      if (!ts || now - new Date(ts).getTime() > 3 * DAY_MS) return;
+      const candidate = candidateById.get(resume.candidateId);
+      notifications.push({
+        id: `resume:${resume.id}`, category: "resume_parsing",
+        title: "Resume parsing completed",
+        message: `${candidate?.name || resume.fileName || "A resume"} was parsed and added to Candidates.`,
+        createdAt: ts, targetView: "inbox", targetId: resume.id
+      });
+    });
+  }
+
+  // Top candidate alerts: applications scoring 90%+ on jobs assigned to this user
+  db.applications.forEach((app) => {
+    if (!(app.matchScore >= 90)) return;
+    const candidate = candidateById.get(app.candidateId);
+    const job = jobById.get(app.jobId);
+    if (!candidate || !job || !isJobRelevant(job)) return;
+    notifications.push({
+      id: `top:${app.id}`, category: "top_candidate",
+      title: "Top candidate match",
+      message: `${candidate.name} scored ${app.matchScore}% for ${job.title}.`,
+      createdAt: app.appliedAt || new Date().toISOString(), targetView: "pipeline", targetId: job.id
+    });
+  });
+
+  // Candidate recommendations: strong (80-89%) matches, one notification per job
+  const strongByJob = new Map();
+  db.applications.forEach((app) => {
+    if (!(app.matchScore >= 80 && app.matchScore < 90)) return;
+    const job = jobById.get(app.jobId);
+    if (!job || !isJobRelevant(job)) return;
+    strongByJob.set(job.id, (strongByJob.get(job.id) || 0) + 1);
+  });
+  strongByJob.forEach((count, jobId) => {
+    const job = jobById.get(jobId);
+    notifications.push({
+      id: `rec:${jobId}`, category: "candidate_recommendation",
+      title: "Candidate recommendations",
+      message: `${count} strong candidate${count === 1 ? "" : "s"} recommended for ${job.title}.`,
+      createdAt: job.createdAt || new Date().toISOString(), targetView: "pipeline", targetId: jobId
+    });
+  });
+
+  // New job matches: jobs opened in the last 7 days that already have applicants
+  db.jobs.forEach((job) => {
+    if (!job.createdAt || now - new Date(job.createdAt).getTime() > 7 * DAY_MS) return;
+    if (!isJobRelevant(job)) return;
+    const count = db.applications.filter((app) => app.jobId === job.id).length;
+    if (!count) return;
+    notifications.push({
+      id: `jobmatch:${job.id}`, category: "job_match",
+      title: "New job matches",
+      message: `${count} candidate${count === 1 ? "" : "s"} matched to the new ${job.title} role.`,
+      createdAt: job.createdAt, targetView: "jobs", targetId: job.id
+    });
+  });
+
+  // Compliance alerts: only for roles that can actually see Compliance
+  if (roleCanView(currentUser.role, "compliance")) {
+    const reminderDays = db.settings?.compliance?.expiryReminderDays ?? 30;
+    db.candidates.forEach((candidate) => {
+      (candidate.complianceDocuments || []).forEach((doc) => {
+        if (!doc.expiryDate) return;
+        const daysLeft = (new Date(doc.expiryDate).getTime() - now) / DAY_MS;
+        if (daysLeft < 0 || daysLeft > reminderDays) return;
+        notifications.push({
+          id: `compliance:${candidate.id}:${doc.id || doc.type}`, category: "compliance",
+          title: "Compliance document expiring",
+          message: `${candidate.name}'s ${doc.type || "document"} expires in ${Math.max(0, Math.ceil(daysLeft))} day(s).`,
+          createdAt: new Date().toISOString(), targetView: "compliance", targetId: candidate.id
+        });
+      });
+    });
+  }
+
+  // Upcoming interviews: applications currently sitting in the Interview stage, on jobs relevant to this user
+  db.applications.forEach((app) => {
+    if (normalizeStage(app.stage) !== "Interview") return;
+    const candidate = candidateById.get(app.candidateId);
+    const job = jobById.get(app.jobId);
+    if (!candidate || !job || !isJobRelevant(job)) return;
+    notifications.push({
+      id: `interview:${app.id}`, category: "interview",
+      title: "Upcoming interview",
+      message: `${candidate.name} is in the interview stage for ${job.title}.`,
+      createdAt: app.appliedAt || new Date().toISOString(), targetView: "pipeline", targetId: job.id
+    });
+  });
+
+  // AI insights: only this user's own ATS Intelligence conversations -- never anyone else's
+  (db.aiChats || []).filter((chat) => chat.ownerId === currentUser.id).slice(-5).forEach((chat) => {
+    if (!chat.text) return;
+    notifications.push({
+      id: `ai:${chat.id}`, category: "ai_insight",
+      title: "AI insight",
+      message: chat.text.split("\n").find((line) => line.trim())?.slice(0, 140) || "New AI insight is ready.",
+      createdAt: chat.createdAt, targetView: "ai", targetId: chat.id
+    });
+  });
+
+  // Market/job trend: org-wide metric, only for roles that can see Reports
+  if (roleCanView(currentUser.role, "reports")) {
+    const uploadsThisWeek = db.websiteResumes.filter((r) => now - new Date(r.submittedAt).getTime() <= 7 * DAY_MS).length;
+    const uploadsLastWeek = db.websiteResumes.filter((r) => {
+      const age = now - new Date(r.submittedAt).getTime();
+      return age > 7 * DAY_MS && age <= 14 * DAY_MS;
+    }).length;
+    if (uploadsThisWeek > 0 || uploadsLastWeek > 0) {
+      const delta = uploadsThisWeek - uploadsLastWeek;
+      const trendWord = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+      notifications.push({
+        id: `trend:${new Date().toISOString().slice(0, 10)}`, category: "market_trend",
+        title: "Candidate supply trend",
+        message: `Resume uploads are ${trendWord} this week: ${uploadsThisWeek} vs ${uploadsLastWeek} last week.`,
+        createdAt: new Date().toISOString(), targetView: "reports"
+      });
+    }
+  }
+
+  // System alerts -- admin only, these are org-infrastructure concerns, not individual work
+  if (isAdmin) {
+    const needsReviewCount = db.websiteResumes.filter((r) => r.needsReview || r.extractionQuality === "poor").length;
+    if (needsReviewCount > 5) {
+      notifications.push({
+        id: "system:review-backlog", category: "system",
+        title: "Resume review backlog",
+        message: `${needsReviewCount} resumes need manual review in Resume Management.`,
+        createdAt: new Date().toISOString(), targetView: "inbox"
+      });
+    }
+    if (!process.env.COHERE_API_KEY) {
+      notifications.push({
+        id: "system:local-ai", category: "system",
+        title: "Using local ranking engine",
+        message: "No external AI key configured -- candidate matching is running on the local ATS ranking engine.",
+        createdAt: new Date().toISOString(), targetView: "settings:system"
+      });
+    }
+  }
+
+  // Targeted admin-triggered notifications for this specific user (role changes, etc.)
+  (db.directNotifications || []).filter((n) => n.userId === currentUser.id).forEach((n) => {
+    notifications.push({
+      id: n.id, category: n.category || "account",
+      title: n.title, message: n.message,
+      createdAt: n.createdAt, targetView: n.targetView || ""
+    });
+  });
+
+  return notifications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
 function systemStatus(db) {
   const ocrAvailable = existsSync("/opt/homebrew/bin/tesseract") || existsSync("/usr/local/bin/tesseract");
   const pending = db.websiteResumes.filter((resume) => !resume.processed).length;
@@ -1821,7 +2407,19 @@ function serveStatic(req, res, url) {
 
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  applySecurityHeaders(req, res);
   if (req.method === "OPTIONS") return json(res, 204, {});
+
+  // Rate limit every request by client IP. Auth/login-style routes get a much
+  // tighter budget since they're the most valuable target for brute-forcing.
+  const ip = clientIp(req);
+  const isAuthRoute = url.pathname.startsWith("/auth/") || url.pathname === "/auth";
+  const limitOk = isAuthRoute
+    ? checkRateLimit(`auth:${ip}`, AUTH_RATE_LIMIT_MAX)
+    : checkRateLimit(`api:${ip}`, RATE_LIMIT_MAX);
+  if (!limitOk) {
+    return json(res, 429, { error: "Too many requests. Please slow down and try again shortly." });
+  }
 
   try {
     if (url.pathname.startsWith("/auth/") || url.pathname === "/auth" || url.pathname.startsWith("/api/users")) {
@@ -1830,13 +2428,145 @@ async function handleRequest(req, res) {
     }
 
     if (url.pathname.startsWith("/api/")) {
+      if (req.method === "GET" && url.pathname === "/api/health") return json(res, 200, { ok: true });
+
+      const currentUser = await authenticateApiRequest(req);
+      if (!currentUser) return json(res, 401, { error: "Not authenticated. Please sign in again." });
+      req.currentUser = currentUser;
+
+      const moduleKey = moduleForApiPath(url.pathname);
+      if (moduleKey) {
+        const isRead = req.method === "GET" || req.method === "HEAD";
+        const allowed = isRead ? roleCanView(currentUser.role, moduleKey) : roleCanEdit(currentUser.role, moduleKey);
+        if (!allowed) return json(res, 403, { error: "You don't have permission to do that." });
+      }
+
       const db = readDb();
 
-      if (req.method === "GET" && url.pathname === "/api/health") return json(res, 200, { ok: true });
-      if (req.method === "GET" && url.pathname === "/api/all") return json(res, 200, hydrate(db));
+      if (req.method === "GET" && url.pathname === "/api/all") {
+        const hydrated = hydrate(db);
+        hydrated.myNotificationReadIds = db.notificationReads[currentUser.id] || [];
+        return json(res, 200, hydrated);
+      }
       if (req.method === "GET" && url.pathname === "/api/dashboard") return json(res, 200, dashboard(db));
       if (req.method === "GET" && url.pathname === "/api/recommendations") return json(res, 200, talentRecommendations(db));
+
+      // Full explainable match for one candidate/job pair, including real semantic
+      // similarity when an embeddings provider is configured. Deliberately NOT used for
+      // bulk scoring (dashboard, pipeline auto-scoring) -- this is for a recruiter opening
+      // one candidate against one job and wanting the full breakdown behind the number.
+      if (req.method === "GET" && /^\/api\/candidates\/[^/]+\/match\/[^/]+$/.test(url.pathname)) {
+        const [, , candidateId, , jobId] = url.pathname.split("/");
+        const candidate = db.candidates.find((item) => item.id === candidateId);
+        const job = db.jobs.find((item) => item.id === jobId);
+        if (!candidate || !job) return json(res, 404, { error: "Candidate or job not found" });
+        const match = await matchCandidateToJob(candidate, job, matchWeightsFromSettings(db));
+        return json(res, 200, match);
+      }
       if (req.method === "GET" && url.pathname === "/api/system-status") return json(res, 200, systemStatus(db));
+
+      // ── Settings module ──────────────────────────────────────────────
+      // GET /api/settings -> which categories this role can see, plus their current values.
+      // Individual category reads/writes below are still independently gated by the
+      // centralized moduleForApiPath -> settings_<category> check above, so this listing
+      // endpoint is just a convenience aggregate, not an extra trust boundary.
+      if (req.method === "GET" && url.pathname === "/api/settings") {
+        const allowedCategories = SETTINGS_CATEGORIES.filter((category) => roleCanView(currentUser.role, `settings_${category}`));
+        const settings = Object.fromEntries(allowedCategories.map((category) => [category, db.settings[category]]));
+        const editable = Object.fromEntries(allowedCategories.map((category) => [category, roleCanEdit(currentUser.role, `settings_${category}`)]));
+        return json(res, 200, { categories: allowedCategories, settings, editable });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/settings/profile") {
+        const profile = db.userProfiles[currentUser.id] || {};
+        return json(res, 200, {
+          id: currentUser.id,
+          name: currentUser.name,
+          email: currentUser.email,
+          role: currentUser.role,
+          phone: profile.phone || "",
+          photoUrl: profile.photoUrl || "",
+          mfaEnabled: Boolean(profile.mfaEnabled)
+        });
+      }
+
+      if (req.method === "PATCH" && url.pathname === "/api/settings/profile") {
+        const body = await readJson(req);
+        const existing = db.userProfiles[currentUser.id] || {};
+        const before = { ...existing };
+        if (typeof body.phone === "string") existing.phone = body.phone.trim().slice(0, 30);
+        if (typeof body.photoUrl === "string") existing.photoUrl = body.photoUrl.trim().slice(0, 2000);
+        if (typeof body.mfaEnabled === "boolean") existing.mfaEnabled = body.mfaEnabled;
+        db.userProfiles[currentUser.id] = existing;
+        db.settingsAudit.push({
+          id: id("aud"), category: "profile", field: Object.keys(body).join(","),
+          before, after: existing, actorId: currentUser.id, actorName: currentUser.name, at: new Date().toISOString()
+        });
+        db.activities.push({ id: id("act"), message: `${currentUser.name} updated their profile settings.`, createdAt: new Date().toISOString() });
+        writeDb(db);
+        return json(res, 200, { id: currentUser.id, name: currentUser.name, email: currentUser.email, role: currentUser.role, ...existing });
+      }
+
+      // Admin-only full audit trail of every settings change (Security Settings > audit logs).
+      if (req.method === "GET" && url.pathname === "/api/settings-audit") {
+        if (currentUser.role !== "admin") return json(res, 403, { error: "You don't have permission to do that." });
+        return json(res, 200, { entries: db.settingsAudit.slice(-500).reverse() });
+      }
+
+      // Global Activity Log -- admin only. This is a separate endpoint (rather than
+      // reusing the audit entries bundled into /api/all) specifically so a non-admin
+      // can't see the org-wide audit trail just by inspecting the network tab or
+      // hitting the URL directly; db.activities isn't included in hydrate()'s payload
+      // at all anymore. Belt-and-suspenders explicit role check on top of the
+      // centralized moduleForApiPath("activity") gate above.
+      if (req.method === "GET" && url.pathname === "/api/activity-log") {
+        if (currentUser.role !== "admin") return json(res, 403, { error: "You don't have permission to do that." });
+        return json(res, 200, { activities: db.activities.slice(-500).reverse() });
+      }
+
+      // Admin-only: push a targeted notification to one specific user. Currently used
+      // for "your role was changed" alerts triggered from Settings > User & Role
+      // Management, since the role-change mutation itself happens in usersRoutes.js.
+      if (req.method === "POST" && url.pathname === "/api/user-notifications") {
+        if (currentUser.role !== "admin") return json(res, 403, { error: "You don't have permission to do that." });
+        const body = await readJson(req);
+        if (!body.userId || !body.title || !body.message) return json(res, 400, { error: "userId, title, and message are required" });
+        db.directNotifications.push({
+          id: id("unotif"), userId: body.userId, category: body.category || "account",
+          title: String(body.title).slice(0, 140), message: String(body.message).slice(0, 300),
+          targetView: body.targetView || "", createdAt: new Date().toISOString()
+        });
+        writeDb(db);
+        return json(res, 200, { ok: true });
+      }
+
+      if (req.method === "GET" && /^\/api\/settings\/[^/]+$/.test(url.pathname)) {
+        const category = url.pathname.split("/")[3];
+        if (!SETTINGS_CATEGORIES.includes(category)) return json(res, 404, { error: "Unknown settings category" });
+        return json(res, 200, { category, values: db.settings[category] });
+      }
+
+      if (req.method === "PATCH" && /^\/api\/settings\/[^/]+$/.test(url.pathname)) {
+        const category = url.pathname.split("/")[3];
+        if (!SETTINGS_CATEGORIES.includes(category)) return json(res, 404, { error: "Unknown settings category" });
+        const body = await readJson(req);
+        const validationError = validateSettingsPatch(category, body);
+        if (validationError) return json(res, 400, { error: validationError });
+        const before = { ...db.settings[category] };
+        db.settings[category] = mergeSettingsPatch(db.settings[category], body);
+        db.settingsAudit.push({
+          id: id("aud"), category, field: Object.keys(body).join(","),
+          before, after: db.settings[category], actorId: currentUser.id, actorName: currentUser.name, at: new Date().toISOString()
+        });
+        db.activities.push({
+          id: id("act"),
+          message: `${currentUser.name} updated ${SETTINGS_LABELS[category] || category} settings.`,
+          createdAt: new Date().toISOString()
+        });
+        writeDb(db);
+        return json(res, 200, { category, values: db.settings[category] });
+      }
+
 
       if (req.method === "POST" && url.pathname === "/api/jobs/import-url") {
         try {
@@ -2016,7 +2746,8 @@ async function handleRequest(req, res) {
           closingDate: body.closingDate || "",
           description,
           skills,
-          assignedRecruiter: "ASJ Recruiter",
+          assignedRecruiter: currentUser?.name || "ASJ Recruiter",
+          assignedRecruiterId: currentUser?.id || null,
           createdAt: new Date().toISOString()
         };
         db.jobs.push(job);
@@ -2091,11 +2822,27 @@ async function handleRequest(req, res) {
         const job = db.jobs.find((item) => item.id === app.jobId);
         db.activities.push({
           id: id("act"),
-          message: `${candidate?.name || "Candidate"} moved to ${app.decision || app.stage}. Job: ${job?.title || "Unknown Job"}. By: Recruiter.`,
+          message: `${candidate?.name || "Candidate"} moved to ${app.decision || app.stage}. Job: ${job?.title || "Unknown Job"}. By: ${req.currentUser?.name || "Recruiter"}.`,
           createdAt: new Date().toISOString()
         });
         writeDb(db);
         return json(res, 200, { application: app, ...publicState(db) });
+      }
+
+      if (req.method === "DELETE" && /^\/api\/applications\/[^/]+$/.test(url.pathname)) {
+        const appId = url.pathname.split("/")[3];
+        const app = db.applications.find((item) => item.id === appId);
+        if (!app) return json(res, 404, { error: "Pipeline entry not found" });
+        const candidate = db.candidates.find((item) => item.id === app.candidateId);
+        const job = db.jobs.find((item) => item.id === app.jobId);
+        db.applications = db.applications.filter((item) => item.id !== appId);
+        db.activities.push({
+          id: id("act"),
+          message: `${candidate?.name || "Candidate"} removed from pipeline for ${job?.title || "job"}. By: ${req.currentUser?.name || "Recruiter"}.`,
+          createdAt: new Date().toISOString()
+        });
+        writeDb(db);
+        return json(res, 200, { deleted: appId, ...publicState(db) });
       }
 
       if (req.method === "POST" && url.pathname === "/api/applications") {
@@ -2106,7 +2853,7 @@ async function handleRequest(req, res) {
           const job = db.jobs.find((item) => item.id === app.jobId);
           db.activities.push({
             id: id("act"),
-            message: `${candidate?.name || "Candidate"} added to ${app.stage}. Job: ${job?.title || "Unknown Job"}. By: Recruiter.`,
+            message: `${candidate?.name || "Candidate"} added to ${app.stage}. Job: ${job?.title || "Unknown Job"}. By: ${req.currentUser?.name || "Recruiter"}.`,
             createdAt: new Date().toISOString()
           });
           writeDb(db);
@@ -2114,6 +2861,39 @@ async function handleRequest(req, res) {
         } catch (error) {
           return json(res, 400, { error: error.message });
         }
+      }
+
+      // ATS Resume Analysis report for one candidate. Returns the cached report if one
+      // exists (computed whenever the candidate's resume is parsed/reparsed -- see
+      // refreshAtsReport), or computes it on the fly for older records that predate this
+      // feature so nothing shows a blank/broken report just because it's legacy data.
+      if (req.method === "GET" && /^\/api\/candidates\/[^/]+\/ats-report$/.test(url.pathname)) {
+        const candidateId = url.pathname.split("/")[3];
+        const candidate = db.candidates.find((item) => item.id === candidateId);
+        if (!candidate) return json(res, 404, { error: "Candidate not found" });
+        if (!candidate.atsReport) refreshAtsReport(db, candidate);
+        writeDb(db);
+        return json(res, 200, { candidateId, report: candidate.atsReport });
+      }
+
+      if (req.method === "POST" && /^\/api\/candidates\/[^/]+\/ats-report\/refresh$/.test(url.pathname)) {
+        const candidateId = url.pathname.split("/")[4];
+        const candidate = db.candidates.find((item) => item.id === candidateId);
+        if (!candidate) return json(res, 404, { error: "Candidate not found" });
+        refreshAtsReport(db, candidate);
+        writeDb(db);
+        return json(res, 200, { candidateId, report: candidate.atsReport });
+      }
+
+      // Bulk-backfill: analyze every candidate that doesn't have a cached report yet
+      // (existing candidates uploaded before this feature shipped won't have one until
+      // they're touched again). Only computes for the missing ones, not a full re-run,
+      // since re-analyzing everything on every click would be wasteful for a large roster.
+      if (req.method === "POST" && url.pathname === "/api/candidates/ats-report/bulk-refresh") {
+        const pending = db.candidates.filter((candidate) => !candidate.atsReport);
+        pending.forEach((candidate) => refreshAtsReport(db, candidate));
+        writeDb(db);
+        return json(res, 200, { analyzed: pending.length, ...publicState(db) });
       }
 
       if (req.method === "DELETE" && url.pathname.startsWith("/api/candidates/")) {
@@ -2131,6 +2911,45 @@ async function handleRequest(req, res) {
         db.activities.push({ id: id("act"), message: `${candidate.name} deleted from candidate database.`, createdAt: new Date().toISOString() });
         writeDb(db);
         return json(res, 200, { deleted: candidateId, ...publicState(db) });
+      }
+
+      if ((req.method === "PATCH" || req.method === "PUT") && /^\/api\/candidates\/[^/]+$/.test(url.pathname)) {
+        const candidateId = url.pathname.split("/")[3];
+        const candidate = db.candidates.find((item) => item.id === candidateId);
+        if (!candidate) return json(res, 404, { error: "Candidate not found" });
+        const body = await readJson(req);
+
+        // Only accept a fixed set of editable fields -- resumeText/resumeUrl/aiSummary etc.
+        // stay server-derived from the parsed resume, not hand-editable here.
+        if (body.name !== undefined) {
+          const name = String(body.name).trim();
+          if (!name) return json(res, 400, { error: "Candidate name cannot be empty" });
+          candidate.name = name;
+        }
+        if (body.email !== undefined) candidate.email = String(body.email).trim();
+        if (body.phone !== undefined) candidate.phone = String(body.phone).trim();
+        if (body.location !== undefined) candidate.location = String(body.location).trim();
+        if (body.currentRole !== undefined) candidate.currentRole = String(body.currentRole).trim();
+        if (body.experienceYears !== undefined) {
+          const years = Number(body.experienceYears);
+          if (!Number.isNaN(years) && years >= 0) candidate.experienceYears = years;
+        }
+        if (body.status !== undefined) candidate.status = String(body.status).trim();
+        if (body.tags !== undefined) {
+          candidate.tags = Array.isArray(body.tags)
+            ? body.tags.map((tag) => String(tag).trim()).filter(Boolean)
+            : String(body.tags).split(",").map((tag) => tag.trim()).filter(Boolean);
+        }
+        if (body.notes !== undefined) candidate.notes = String(body.notes);
+        candidate.updatedAt = new Date().toISOString();
+
+        db.activities.push({
+          id: id("act"),
+          message: `${candidate.name} profile updated by ${req.currentUser?.name || "a recruiter"}.`,
+          createdAt: new Date().toISOString()
+        });
+        writeDb(db);
+        return json(res, 200, { candidate, ...publicState(db) });
       }
 
       if (req.method === "POST" && url.pathname === "/api/candidates/bulk-delete") {
@@ -2158,6 +2977,134 @@ async function handleRequest(req, res) {
         db.activities.push({ id: id("act"), message: `${entry.candidates.length} candidate(s) restored.`, createdAt: new Date().toISOString() });
         writeDb(db);
         return json(res, 200, { restored: entry.candidates.length, ...publicState(db) });
+      }
+
+      // ── Compliance documents ──────────────────────────────────────────
+      if (req.method === "POST" && url.pathname === "/api/compliance/documents") {
+        try {
+          const raw = await readRaw(req);
+          const parts = parseMultipart(raw, req.headers["content-type"] || "");
+          const fields = Object.fromEntries(parts.filter((part) => !part.filename).map((part) => [part.name, part.body.toString("utf8")]));
+          const file = parts.find((part) => part.name === "file" && part.filename);
+
+          const candidate = db.candidates.find((item) => item.id === fields.candidateId);
+          if (!candidate) return json(res, 404, { error: "Candidate not found" });
+          if (!file) return json(res, 400, { error: "Choose a document file to upload." });
+          if (file.body.length > MAX_UPLOAD_BYTES) return json(res, 400, { error: "File is too large. Maximum size is 10MB." });
+          const extension = extname(file.filename).toLowerCase();
+          if (!ALLOWED_COMPLIANCE_EXTENSIONS.has(extension)) {
+            return json(res, 400, { error: "Only PDF, DOC, DOCX, PNG, JPG, and WEBP files are allowed." });
+          }
+          const documentType = COMPLIANCE_DOCUMENT_TYPES.includes(fields.type) ? fields.type : "Other";
+
+          const storedName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${safeFilename(file.filename)}`;
+          writeFileSync(join(UPLOAD_DIR, storedName), file.body);
+
+          const doc = {
+            id: id("doc"),
+            type: documentType,
+            fileName: file.filename,
+            fileUrl: `/uploads/${storedName}`,
+            uploadedAt: new Date().toISOString(),
+            uploadedBy: req.currentUser?.name || "Unknown",
+            expiryDate: fields.expiryDate || "",
+            status: "submitted",
+            notes: fields.notes || "",
+            timeline: [{ event: "Document Uploaded", at: new Date().toISOString(), by: req.currentUser?.name || "Unknown" }]
+          };
+          candidate.complianceDocuments.push(doc);
+          db.activities.push({ id: id("act"), message: `${documentType} uploaded for ${candidate.name} by ${req.currentUser?.name || "a recruiter"}.`, createdAt: new Date().toISOString() });
+          writeDb(db);
+          return json(res, 201, { document: doc, ...publicState(db) });
+        } catch (error) {
+          return json(res, 400, { error: error.message });
+        }
+      }
+
+      if ((req.method === "PATCH" || req.method === "PUT") && /^\/api\/compliance\/documents\/[^/]+$/.test(url.pathname)) {
+        const documentId = url.pathname.split("/")[4];
+        const found = findComplianceDocument(db, documentId);
+        if (!found) return json(res, 404, { error: "Document not found" });
+        const { candidate, doc } = found;
+        const body = await readJson(req);
+        const actor = req.currentUser?.name || "a recruiter";
+
+        if (body.expiryDate !== undefined) doc.expiryDate = body.expiryDate;
+        if (body.notes !== undefined) doc.notes = String(body.notes);
+        if (body.status && ["submitted", "verified", "expired", "review_required"].includes(body.status) && body.status !== doc.status) {
+          const eventLabel = { verified: "Verified", expired: "Expired", review_required: "Review Required", submitted: "Updated" }[body.status] || "Updated";
+          doc.status = body.status;
+          doc.verifiedBy = body.status === "verified" ? actor : doc.verifiedBy;
+          doc.verifiedAt = body.status === "verified" ? new Date().toISOString() : doc.verifiedAt;
+          doc.timeline.push({ event: eventLabel, at: new Date().toISOString(), by: actor });
+        } else if (body.expiryDate !== undefined || body.notes !== undefined) {
+          doc.timeline.push({ event: "Updated", at: new Date().toISOString(), by: actor });
+        }
+
+        db.activities.push({ id: id("act"), message: `${doc.type} for ${candidate.name} marked ${doc.status.replace(/_/g, " ")} by ${actor}.`, createdAt: new Date().toISOString() });
+        writeDb(db);
+        return json(res, 200, { document: doc, ...publicState(db) });
+      }
+
+      if (req.method === "DELETE" && /^\/api\/compliance\/documents\/[^/]+$/.test(url.pathname)) {
+        const documentId = url.pathname.split("/")[4];
+        const found = findComplianceDocument(db, documentId);
+        if (!found) return json(res, 404, { error: "Document not found" });
+        const { candidate, doc } = found;
+        candidate.complianceDocuments = candidate.complianceDocuments.filter((item) => item.id !== documentId);
+        try {
+          const filePath = resolve(UPLOAD_DIR, doc.fileUrl.replace("/uploads/", ""));
+          if (filePath.startsWith(UPLOAD_DIR) && existsSync(filePath)) unlinkSync(filePath);
+        } catch (error) {
+          console.warn(`[compliance] could not remove file for deleted document: ${error.message}`);
+        }
+        db.activities.push({ id: id("act"), message: `${doc.type} removed for ${candidate.name} by ${req.currentUser?.name || "a recruiter"}.`, createdAt: new Date().toISOString() });
+        writeDb(db);
+        return json(res, 200, { deleted: documentId, ...publicState(db) });
+      }
+
+      // ── Notifications (separate, computed feed -- see computeNotifications) ──
+      if (req.method === "GET" && url.pathname === "/api/notifications") {
+        const notifications = computeNotifications(db, currentUser);
+        // Role-change alert: the role-change action itself happens in routes/usersRoutes.js
+        // (outside this file), so there's no direct hook to fire a notification from the
+        // moment it happens. Instead, we detect it here by comparing the role on the
+        // authenticated session against the last role we saw for this user -- the first
+        // request after an admin changes someone's role, this fires once for that user only.
+        const profile = db.userProfiles[currentUser.id] || {};
+        if (profile.lastKnownRole && profile.lastKnownRole !== currentUser.role) {
+          notifications.unshift({
+            id: `role-change:${currentUser.id}:${currentUser.role}:${Date.now()}`,
+            category: "system",
+            title: "Your role was updated",
+            message: `Your access level was changed from ${profile.lastKnownRole} to ${currentUser.role}.`,
+            createdAt: new Date().toISOString(),
+            targetView: "settings:profile"
+          });
+        }
+        if (profile.lastKnownRole !== currentUser.role) {
+          db.userProfiles[currentUser.id] = { ...profile, lastKnownRole: currentUser.role };
+          writeDb(db);
+        }
+        const readIds = db.notificationReads[currentUser.id] || [];
+        return json(res, 200, { notifications, readIds });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/notifications/mark-read") {
+        const body = await readJson(req);
+        const readIds = new Set(db.notificationReads[currentUser.id] || []);
+        readIds.add(body.activityId);
+        db.notificationReads[currentUser.id] = [...readIds];
+        writeDb(db);
+        return json(res, 200, { myNotificationReadIds: db.notificationReads[currentUser.id] });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/notifications/mark-all-read") {
+        // Mark every *currently computed* notification as read, not the activity log --
+        // notifications now have their own ID space (see computeNotifications).
+        db.notificationReads[currentUser.id] = computeNotifications(db, currentUser).map((n) => n.id);
+        writeDb(db);
+        return json(res, 200, { myNotificationReadIds: db.notificationReads[currentUser.id] });
       }
 
       if (req.method === "POST" && url.pathname === "/api/outreach") {
@@ -2203,15 +3150,54 @@ async function handleRequest(req, res) {
         return json(res, 200, draft);
       }
 
+      // ── Follow-ups: schedule a reminder email to go out N days from now ──
+      if (req.method === "POST" && url.pathname === "/api/outreach/follow-ups") {
+        const body = await readJson(req);
+        const ids = body.candidateIds || [];
+        const afterDays = Math.max(1, Number(body.afterDays) || 3);
+        const job = db.jobs.find((item) => item.id === body.jobId);
+        const scheduledFor = new Date(Date.now() + afterDays * 24 * 60 * 60 * 1000).toISOString();
+        const created = [];
+        for (const candidateId of ids) {
+          const candidate = db.candidates.find((item) => item.id === candidateId);
+          if (!candidate) continue;
+          const subject = personalizeOutreach(body.subject || `Following up${job ? `: ${job.title}` : ""}`, candidate, job);
+          const message = personalizeOutreach(body.message || `Hi {{name}},\n\nJust following up on our earlier message${job ? ` about ${job.title}` : ""}. Let us know if you're still interested.\n\nRegards,\nRecruitment Team`, candidate, job);
+          const followup = {
+            id: id("fu"), candidateId, candidateName: candidate.name, jobId: job?.id || "",
+            subject, message, afterDays, scheduledFor, status: "scheduled",
+            createdAt: new Date().toISOString(), createdBy: req.currentUser?.name || "Recruiter", sentAt: "", detail: ""
+          };
+          db.outreachFollowups.push(followup);
+          created.push(followup);
+        }
+        db.activities.push({ id: id("act"), message: `${created.length} follow-up email(s) scheduled for ${afterDays} day(s) from now by ${req.currentUser?.name || "a recruiter"}.`, createdAt: new Date().toISOString() });
+        writeDb(db);
+        return json(res, 201, { created, ...publicState(db) });
+      }
+
+      if (req.method === "POST" && /^\/api\/outreach\/follow-ups\/[^/]+\/cancel$/.test(url.pathname)) {
+        const followupId = url.pathname.split("/")[4];
+        const followup = db.outreachFollowups.find((item) => item.id === followupId);
+        if (!followup) return json(res, 404, { error: "Follow-up not found" });
+        if (followup.status !== "scheduled") return json(res, 400, { error: "Only scheduled follow-ups can be cancelled." });
+        followup.status = "cancelled";
+        db.activities.push({ id: id("act"), message: `Follow-up to ${followup.candidateName} cancelled by ${req.currentUser?.name || "a recruiter"}.`, createdAt: new Date().toISOString() });
+        writeDb(db);
+        return json(res, 200, { followup, ...publicState(db) });
+      }
+
       if (req.method === "POST" && url.pathname === "/api/ai-insight") {
         const body = await readJson(req);
         try {
           const text = await cohereInsight(body.prompt || `Give ASJ recruiters one useful hiring insight for the ${body.page || "current"} page.`, db);
-          db.aiChats.push({ id: id("chat"), prompt: body.prompt || "", text, createdAt: new Date().toISOString() });
+          // ownerId scopes this chat to the user who asked it -- ATS Intelligence history
+          // is private per-user, never shared across the team (see GET below).
+          db.aiChats.push({ id: id("chat"), ownerId: currentUser.id, prompt: body.prompt || "", text, createdAt: new Date().toISOString() });
           writeDb(db);
           return json(res, 200, {
             text,
-            chats: db.aiChats.slice(-20),
+            chats: db.aiChats.filter((chat) => chat.ownerId === currentUser.id).slice(-20),
             recommendations: talentRecommendations(db)
           });
         } catch (error) {
@@ -2221,11 +3207,16 @@ async function handleRequest(req, res) {
 
       if (req.method === "DELETE" && url.pathname.startsWith("/api/ai-chats/")) {
         const chatId = url.pathname.split("/")[3];
-        const before = db.aiChats.length;
-        db.aiChats = db.aiChats.filter((chat) => chat.id !== chatId);
-        if (db.aiChats.length === before) return json(res, 404, { error: "Chat not found" });
+        const chat = db.aiChats.find((item) => item.id === chatId);
+        if (!chat) return json(res, 404, { error: "Chat not found" });
+        if (chat.ownerId && chat.ownerId !== currentUser.id) return json(res, 403, { error: "You can only delete your own conversations." });
+        db.aiChats = db.aiChats.filter((item) => item.id !== chatId);
         writeDb(db);
-        return json(res, 200, { deleted: chatId, chats: db.aiChats.slice(-20), data: hydrate(db), dashboard: dashboard(db), recommendations: talentRecommendations(db) });
+        return json(res, 200, {
+          deleted: chatId,
+          chats: db.aiChats.filter((item) => item.ownerId === currentUser.id).slice(-20),
+          data: hydrate(db), dashboard: dashboard(db), recommendations: talentRecommendations(db)
+        });
       }
 
       return json(res, 404, { error: "API route not found" });
@@ -2239,6 +3230,16 @@ async function handleRequest(req, res) {
 }
 
 function startServer(port = PORT) {
+  // Without these, a single unexpected rejection anywhere (a background resume-parse
+  // call, a scheduled follow-up tick, etc.) would otherwise crash the whole process
+  // and take down every logged-in recruiter's session with it.
+  process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled promise rejection:", reason);
+  });
+  process.on("uncaughtException", (error) => {
+    console.error("Uncaught exception:", error);
+  });
+
   const server = createServer(handleRequest);
 
   server.once("error", (error) => {
@@ -2264,5 +3265,48 @@ function startServer(port = PORT) {
     console.log(`ASJ ATS Beta running at http://${HOST}:${port}`);
   });
 }
+
+// Scheduled follow-ups are just records with a scheduledFor timestamp -- something has
+// to actually check for due ones and send them. There's no separate worker process here,
+// so a simple interval on the same process does it. Safe to call repeatedly: it only acts
+// on follow-ups still in "scheduled" status, and failures are recorded per-item rather
+// than thrown, so one bad email can't block the rest of the batch.
+async function processDueFollowups() {
+  const db = readDb();
+  const due = db.outreachFollowups.filter((item) => item.status === "scheduled" && new Date(item.scheduledFor).getTime() <= Date.now());
+  if (!due.length) return;
+
+  for (const followup of due) {
+    const candidate = db.candidates.find((item) => item.id === followup.candidateId);
+    if (!candidate) {
+      followup.status = "failed";
+      followup.detail = "Candidate no longer exists.";
+      continue;
+    }
+    const email = candidateEmail(candidate);
+    if (!email) {
+      followup.status = "failed";
+      followup.detail = "No email found in candidate profile or resume text.";
+      continue;
+    }
+    try {
+      const result = await sendSmtpMail({ to: email, subject: followup.subject, message: followup.message });
+      followup.status = result.status === "sent" ? "sent" : "failed";
+      followup.detail = result.detail;
+      followup.sentAt = new Date().toISOString();
+    } catch (error) {
+      followup.status = "failed";
+      followup.detail = String(error.message || "Send failed").slice(0, 240);
+    }
+  }
+
+  const sentCount = due.filter((item) => item.status === "sent").length;
+  db.activities.push({ id: id("act"), message: `${sentCount} scheduled follow-up email(s) sent, ${due.length - sentCount} failed.`, createdAt: new Date().toISOString() });
+  writeDb(db);
+}
+
+setInterval(() => {
+  processDueFollowups().catch((error) => console.error("[followups] processing error:", error.message));
+}, 60_000);
 
 startServer();
