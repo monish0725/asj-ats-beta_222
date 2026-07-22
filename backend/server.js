@@ -65,7 +65,12 @@ const PUBLIC_DIR = join(ROOT, "public");
 const DB_FILE = process.env.DB_FILE ? resolve(process.env.DB_FILE) : join(ROOT, "data", "db.json");
 const UPLOAD_DIR = join(ROOT, "data", "uploads");
 const PORT = Number(process.env.PORT || 4200);
-const HOST = process.env.HOST || "127.0.0.1";
+const port = Number(process.env.PORT || 4200);
+
+server.listen(port, "0.0.0.0", () => {
+  console.log(`ASJ ATS Beta running on port ${port}`);
+});
+const HOST = "0.0.0.0";
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_BULK_UPLOAD_BYTES = Number(process.env.MAX_BULK_UPLOAD_BYTES || 1024 * 1024 * 1024);
 const MAX_BULK_RESUMES = Number(process.env.MAX_BULK_RESUMES || 5000);
