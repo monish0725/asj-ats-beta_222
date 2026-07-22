@@ -67,7 +67,7 @@ const UPLOAD_DIR = join(ROOT, "data", "uploads");
 const PORT = Number(process.env.PORT || 4200);
 const port = Number(process.env.PORT || 4200);
 
-server.listen(port, "0.0.0.0", () => {
+app.listen(port, () => {
   console.log(`ASJ ATS Beta running on port ${port}`);
 });
 const HOST = "0.0.0.0";
