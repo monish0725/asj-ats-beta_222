@@ -21,10 +21,11 @@ export const AUTH_COOKIE_NAME = "asj_session";
 
 export function authCookieOptions() {
   const isProduction = process.env.NODE_ENV === "production";
+  const sameSite = process.env.COOKIE_SAMESITE || (isProduction ? "none" : "lax");
   return {
     httpOnly: true,
-    secure: isProduction, // requires HTTPS in production; allows http on localhost in dev
-    sameSite: "lax",
+    secure: isProduction || sameSite === "none",
+    sameSite,
     maxAge: 7 * 24 * 60 * 60 * 1000,
     path: "/"
   };

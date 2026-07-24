@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { connect as connectNet } from "node:net";
 import { basename, extname, join, resolve } from "node:path";
@@ -61,16 +62,19 @@ function matchWeightsFromSettings(db) {
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = resolve(__dirname, "..");
+loadEnv();
 const PUBLIC_DIR = join(ROOT, "public");
 const DB_FILE = process.env.DB_FILE ? resolve(process.env.DB_FILE) : join(ROOT, "data", "db.json");
 const UPLOAD_DIR = join(ROOT, "data", "uploads");
 const PORT = Number(process.env.PORT || 4200);
-const port = Number(process.env.PORT || 4200);
-
-app.listen(port, () => {
-  console.log(`ASJ ATS Beta running on port ${port}`);
-});
-const HOST = "0.0.0.0";
+const HOST = process.env.HOST || "0.0.0.0";
+const USE_SUPABASE_DB = process.env.APP_DB_PROVIDER === "supabase" || Boolean(process.env.APP_STATE_TABLE);
+const APP_STATE_TABLE = process.env.APP_STATE_TABLE || "app_state";
+const APP_STATE_KEY = process.env.APP_STATE_KEY || "default";
+const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "resumes";
+const USE_SUPABASE_STORAGE = process.env.STORAGE_PROVIDER === "supabase" || Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_BULK_UPLOAD_BYTES = Number(process.env.MAX_BULK_UPLOAD_BYTES || 1024 * 1024 * 1024);
 const MAX_BULK_RESUMES = Number(process.env.MAX_BULK_RESUMES || 5000);
@@ -78,6 +82,9 @@ const ALLOWED_RESUME_EXTENSIONS = new Set([".pdf", ".doc", ".docx", ".png", ".jp
 const IMAGE_RESUME_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".gif"]);
 const RESUME_WORKERS = Number(process.env.RESUME_WORKERS || 6);
 let resumeQueueRunning = false;
+let appDbCache = null;
+let appDbPool = null;
+let appDbPersist = Promise.resolve();
 
 const KNOWN_SKILLS = [
   "React", "JavaScript", "TypeScript", "Node.js", "Express", "REST", "GraphQL", "PostgreSQL", "MongoDB",
@@ -96,6 +103,14 @@ const ROLE_KEYWORDS = [
   { category: "Design", title: "UI/UX Designer", terms: ["ui/ux", "figma", "prototype", "user research", "design"] },
   { category: "Backend", title: "Backend Engineer", terms: ["spring boot", "java", "microservices", "kafka", "backend"] }
 ];
+
+function sqlIdentifier(name) {
+  const value = String(name || "");
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) throw new Error(`Invalid SQL identifier: ${value}`);
+  return `"${value.replace(/"/g, "\"\"")}"`;
+}
+
+const APP_STATE_TABLE_SQL = sqlIdentifier(APP_STATE_TABLE);
 
 const STAGES = ["Applied", "Matched Candidates", "Interview", "Awaiting Decision", "Final Decision"];
 const STAGE_ALIASES = {
@@ -120,12 +135,32 @@ const STAGE_ALIASES = {
   Matched: "Matched Candidates"
 };
 
-loadEnv();
 mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// Allowed browser origins for API/auth handlers. These endpoints authenticate with
+// an httpOnly session cookie, so production should set CORS_ORIGIN to the Vercel
+// frontend origin. Multiple origins can be comma-separated.
+const ALLOWED_ORIGINS = String(process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+function resolveAllowedOrigin(req) {
+  const origin = req?.headers?.origin;
+  if (!origin) return "";
+  if (!ALLOWED_ORIGINS.length) return origin; // no explicit allowlist configured (e.g. local dev)
+  return ALLOWED_ORIGINS.includes(origin) ? origin : "";
+}
 
 const authApp = express();
 authApp.use(cors({
-  origin: process.env.CORS_ORIGIN || true,
+  origin(origin, callback) {
+    if (!origin || !ALLOWED_ORIGINS.length || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("Origin not allowed by CORS"));
+  },
   credentials: true
 }));
 authApp.use(cookieParser());
@@ -406,33 +441,60 @@ function ensureBetaCollections(db) {
 }
 
 function readDb() {
+  if (appDbCache) return ensureBetaCollections(JSON.parse(JSON.stringify(appDbCache)));
   return ensureBetaCollections(JSON.parse(readFileSync(DB_FILE, "utf8")));
 }
 
 function writeDb(db) {
-  writeFileSync(DB_FILE, `${JSON.stringify(db, null, 2)}\n`);
+  const normalized = ensureBetaCollections(db);
+  appDbCache = normalized;
+  writeFileSync(DB_FILE, `${JSON.stringify(normalized, null, 2)}\n`);
+  if (USE_SUPABASE_DB && appDbPool) {
+    appDbPersist = appDbPersist
+      .catch(() => {})
+      .then(() => persistAppState(normalized))
+      .catch((error) => console.error("[db] Supabase state persist failed:", error.message));
+  }
+}
+
+async function initAppStateStore() {
+  const localDb = readDb();
+  appDbCache = localDb;
+  if (!USE_SUPABASE_DB) return;
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL is required when APP_DB_PROVIDER=supabase.");
+  }
+
+  const { default: pool } = await import("./database/pool.js");
+  appDbPool = pool;
+  await appDbPool.query(`
+    CREATE TABLE IF NOT EXISTS ${APP_STATE_TABLE_SQL} (
+      id text PRIMARY KEY,
+      data jsonb NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  const result = await appDbPool.query(`SELECT data FROM ${APP_STATE_TABLE_SQL} WHERE id = $1`, [APP_STATE_KEY]);
+  if (result.rows[0]?.data) {
+    appDbCache = ensureBetaCollections(result.rows[0].data);
+    writeFileSync(DB_FILE, `${JSON.stringify(appDbCache, null, 2)}\n`);
+    return;
+  }
+  await persistAppState(localDb);
+}
+
+async function persistAppState(db) {
+  if (!appDbPool) return;
+  await appDbPool.query(
+    `INSERT INTO ${APP_STATE_TABLE_SQL} (id, data, updated_at)
+     VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+    [APP_STATE_KEY, JSON.stringify(ensureBetaCollections(db))]
+  );
 }
 
 function id(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-}
-
-// Allowed browser origins for the raw (non-Express) /api/* handler below. These
-// endpoints authenticate with an httpOnly session cookie, so echoing back "*" here
-// (the previous behavior) combined with credentialed requests is a cross-origin data
-// exposure risk -- a malicious page could otherwise ride the logged-in user's cookie
-// against these endpoints. CORS_ORIGIN can be a single origin or a comma-separated list;
-// same-origin requests (no Origin header, e.g. curl/server-to-server) are always allowed.
-const ALLOWED_ORIGINS = String(process.env.CORS_ORIGIN || "")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
-function resolveAllowedOrigin(req) {
-  const origin = req?.headers?.origin;
-  if (!origin) return "";
-  if (!ALLOWED_ORIGINS.length) return origin; // no explicit allowlist configured (e.g. local dev)
-  return ALLOWED_ORIGINS.includes(origin) ? origin : "";
 }
 
 // CORS + security headers are applied once per request in handleRequest (via
@@ -753,6 +815,80 @@ function safeFilename(filename) {
   return cleaned || `resume_${Date.now()}`;
 }
 
+function fileSha256(buffer) {
+  return createHash("sha256").update(buffer).digest("hex");
+}
+
+function assertAllowedUpload({ buffer, filename, allowedExtensions = ALLOWED_RESUME_EXTENSIONS, label = "file" }) {
+  const extension = extname(filename).toLowerCase();
+  if (!allowedExtensions.has(extension)) {
+    throw new Error(`Unsupported ${label} type.`);
+  }
+  const signature = buffer.subarray(0, 12).toString("hex");
+  const asciiStart = buffer.subarray(0, 64).toString("latin1");
+  const isPdf = extension === ".pdf" && asciiStart.startsWith("%PDF-");
+  const isZipDocx = extension === ".docx" && signature.startsWith("504b0304");
+  const isLegacyDoc = extension === ".doc" && signature.startsWith("d0cf11e0a1b11ae1");
+  const isPng = extension === ".png" && signature.startsWith("89504e470d0a1a0a");
+  const isJpeg = [".jpg", ".jpeg"].includes(extension) && signature.startsWith("ffd8ff");
+  const isGif = extension === ".gif" && ["GIF87a", "GIF89a"].includes(buffer.subarray(0, 6).toString("latin1"));
+  const isWebp = extension === ".webp" && buffer.subarray(0, 4).toString("latin1") === "RIFF" && buffer.subarray(8, 12).toString("latin1") === "WEBP";
+  const isTiff = [".tif", ".tiff"].includes(extension) && (signature.startsWith("49492a00") || signature.startsWith("4d4d002a"));
+  if (!(isPdf || isZipDocx || isLegacyDoc || isPng || isJpeg || isGif || isWebp || isTiff)) {
+    throw new Error(`The uploaded ${label} content does not match its file extension.`);
+  }
+  return extension;
+}
+
+async function uploadObject(buffer, filename, contentType = "application/octet-stream") {
+  const storedName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${safeFilename(filename)}`;
+  if (!USE_SUPABASE_STORAGE) {
+    const storedPath = join(UPLOAD_DIR, storedName);
+    writeFileSync(storedPath, buffer, { mode: 0o600 });
+    return { url: `/uploads/${storedName}`, storageKey: storedName };
+  }
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Supabase Storage is enabled but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing.");
+  }
+  const storageKey = `uploads/${storedName}`;
+  const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${SUPABASE_STORAGE_BUCKET}/${encodeURIComponent(storageKey).replace(/%2F/g, "/")}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      "Content-Type": contentType,
+      "Cache-Control": "private, max-age=0, no-store",
+      "x-upsert": "false"
+    },
+    body: buffer
+  });
+  if (!response.ok) {
+    throw new Error(`Supabase Storage upload failed with HTTP ${response.status}.`);
+  }
+  return { url: `/uploads/${storedName}`, storageKey };
+}
+
+async function readStoredObject(uploadName) {
+  if (!USE_SUPABASE_STORAGE) {
+    const file = resolve(UPLOAD_DIR, uploadName);
+    if (!file.startsWith(UPLOAD_DIR) || !existsSync(file)) return null;
+    return { body: readFileSync(file), contentType: contentTypeForFile(file), fileName: basename(file) };
+  }
+  const storageKey = `uploads/${uploadName}`;
+  const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${SUPABASE_STORAGE_BUCKET}/${encodeURIComponent(storageKey).replace(/%2F/g, "/")}`, {
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY
+    }
+  });
+  if (!response.ok) return null;
+  return {
+    body: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get("content-type") || contentTypeForFile(uploadName),
+    fileName: uploadName
+  };
+}
+
 function cleanExtractedText(text) {
   return String(text || "")
     .replace(/\0/g, " ")
@@ -1043,15 +1179,9 @@ function findResumeFiles(folder, files = []) {
   return files;
 }
 
-function addResumeToInbox(db, { buffer, filename, jobId, source, sourcePath = "" }) {
-  const extension = extname(filename).toLowerCase();
-  if (!ALLOWED_RESUME_EXTENSIONS.has(extension)) {
-    throw new Error("Only PDF, DOC, DOCX, PNG, JPG, WEBP, and TIFF resumes are allowed.");
-  }
-
-  const storedName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${safeFilename(filename)}`;
-  const storedPath = join(UPLOAD_DIR, storedName);
-  writeFileSync(storedPath, buffer);
+async function addResumeToInbox(db, { buffer, filename, jobId, source, sourcePath = "", contentType = "" }) {
+  const extension = assertAllowedUpload({ buffer, filename, label: "resume" });
+  const stored = await uploadObject(buffer, filename, contentType || contentTypeForExtension(extension));
 
   const resume = {
     id: id("wr"),
@@ -1060,7 +1190,10 @@ function addResumeToInbox(db, { buffer, filename, jobId, source, sourcePath = ""
     sourcePath,
     jobId: jobId || "",
     processed: false,
-    resumeUrl: `/uploads/${storedName}`,
+    resumeUrl: stored.url,
+    storageProvider: USE_SUPABASE_STORAGE ? "supabase" : "local",
+    storageKey: stored.storageKey,
+    checksumSha256: fileSha256(buffer),
     fileName: filename,
     fileType: extension.slice(1).toUpperCase(),
     fileSize: buffer.length,
@@ -1233,11 +1366,12 @@ async function handleResumeUpload(req, db) {
     throw new Error("Only PDF, DOC, DOCX, PNG, JPG, WEBP, and TIFF resumes are allowed.");
   }
 
-  const resume = addResumeToInbox(db, {
+  const resume = await addResumeToInbox(db, {
     buffer: file.body,
     filename: file.filename,
     jobId: fields.jobId,
-    source: "Manual Resume Upload"
+    source: "Manual Resume Upload",
+    contentType: file.contentType
   });
 
   if (fields.resumeText?.trim()) {
@@ -1269,11 +1403,12 @@ async function handleBulkResumeUpload(req, db) {
   for (const file of files) {
     try {
       if (file.body.length > MAX_UPLOAD_BYTES) throw new Error("Resume is too large. Maximum resume size is 10MB.");
-      const resume = addResumeToInbox(db, {
+      const resume = await addResumeToInbox(db, {
         buffer: file.body,
         filename: file.filename,
         jobId: "",
-        source: files.length > 1 ? "Bulk Resume Upload" : "Manual Resume Upload"
+        source: files.length > 1 ? "Bulk Resume Upload" : "Manual Resume Upload",
+        contentType: file.contentType
       });
       resume.duplicateAction = fields.duplicateAction === "rename" ? "rename" : "skip";
       if (files.length === 1 && fields.resumeText?.trim()) {
@@ -1789,7 +1924,7 @@ function resumeQueueStats(db) {
   };
 }
 
-function importResumeFolder(db, folderPath, jobId) {
+async function importResumeFolder(db, folderPath, jobId) {
   const folder = resolve(folderPath);
   if (!existsSync(folder) || !statSync(folder).isDirectory()) {
     throw new Error("Enter a valid folder path that exists on this Mac.");
@@ -1813,7 +1948,7 @@ function importResumeFolder(db, folderPath, jobId) {
 
     try {
       const buffer = readFileSync(file);
-      const resume = addResumeToInbox(db, {
+      const resume = await addResumeToInbox(db, {
         buffer,
         filename: basename(file),
         jobId,
@@ -2357,6 +2492,10 @@ function systemStatus(db) {
 }
 
 function contentTypeForFile(file) {
+  return contentTypeForExtension(extname(file).toLowerCase());
+}
+
+function contentTypeForExtension(extension) {
   const types = {
     ".pdf": "application/pdf",
     ".png": "image/png",
@@ -2369,26 +2508,32 @@ function contentTypeForFile(file) {
     ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   };
-  return types[extname(file).toLowerCase()] || "application/octet-stream";
+  return types[extension] || "application/octet-stream";
 }
 
-function serveStatic(req, res, url) {
+async function serveUpload(req, res, url) {
   if (url.pathname.startsWith("/uploads/")) {
-    const file = resolve(UPLOAD_DIR, url.pathname.replace("/uploads/", ""));
-    if (!file.startsWith(UPLOAD_DIR) || !existsSync(file)) {
+    const uploadName = basename(url.pathname.replace("/uploads/", ""));
+    const stored = await readStoredObject(uploadName);
+    if (!stored) {
       res.writeHead(404);
       res.end("Not found");
       return;
     }
     res.writeHead(200, {
-      "Content-Type": contentTypeForFile(file),
-      "Content-Disposition": `inline; filename="${basename(file).replace(/"/g, "")}"`,
-      "X-Content-Type-Options": "nosniff"
+      "Content-Type": stored.contentType,
+      "Content-Disposition": `inline; filename="${stored.fileName.replace(/"/g, "")}"`,
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "private, no-store"
     });
-    res.end(readFileSync(file));
-    return;
+    if (req.method === "HEAD") res.end();
+    else res.end(stored.body);
+    return true;
   }
+  return false;
+}
 
+function serveStatic(req, res, url) {
   const requested = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
   const file = resolve(PUBLIC_DIR, requested);
   if (!file.startsWith(PUBLIC_DIR) || !existsSync(file)) {
@@ -2427,6 +2572,13 @@ async function handleRequest(req, res) {
   }
 
   try {
+    if (url.pathname.startsWith("/uploads/")) {
+      const currentUser = await authenticateApiRequest(req);
+      if (!currentUser) return json(res, 401, { error: "Not authenticated. Please sign in again." });
+      await serveUpload(req, res, url);
+      return;
+    }
+
     if (url.pathname.startsWith("/auth/") || url.pathname === "/auth" || url.pathname.startsWith("/api/users")) {
       await handleAuthRequest(req, res);
       return;
@@ -2674,7 +2826,7 @@ async function handleRequest(req, res) {
       if (req.method === "POST" && url.pathname === "/api/import-folder") {
         const body = await readJson(req);
         try {
-          const result = importResumeFolder(db, body.folderPath, "");
+          const result = await importResumeFolder(db, body.folderPath, "");
           writeDb(db);
           return json(res, 201, { ...result, ...publicState(db) });
         } catch (error) {
@@ -2996,20 +3148,19 @@ async function handleRequest(req, res) {
           if (!candidate) return json(res, 404, { error: "Candidate not found" });
           if (!file) return json(res, 400, { error: "Choose a document file to upload." });
           if (file.body.length > MAX_UPLOAD_BYTES) return json(res, 400, { error: "File is too large. Maximum size is 10MB." });
-          const extension = extname(file.filename).toLowerCase();
-          if (!ALLOWED_COMPLIANCE_EXTENSIONS.has(extension)) {
-            return json(res, 400, { error: "Only PDF, DOC, DOCX, PNG, JPG, and WEBP files are allowed." });
-          }
+          const extension = assertAllowedUpload({ buffer: file.body, filename: file.filename, allowedExtensions: ALLOWED_COMPLIANCE_EXTENSIONS, label: "document" });
           const documentType = COMPLIANCE_DOCUMENT_TYPES.includes(fields.type) ? fields.type : "Other";
 
-          const storedName = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${safeFilename(file.filename)}`;
-          writeFileSync(join(UPLOAD_DIR, storedName), file.body);
+          const stored = await uploadObject(file.body, file.filename, file.contentType || contentTypeForExtension(extension));
 
           const doc = {
             id: id("doc"),
             type: documentType,
             fileName: file.filename,
-            fileUrl: `/uploads/${storedName}`,
+            fileUrl: stored.url,
+            storageProvider: USE_SUPABASE_STORAGE ? "supabase" : "local",
+            storageKey: stored.storageKey,
+            checksumSha256: fileSha256(file.body),
             uploadedAt: new Date().toISOString(),
             uploadedBy: req.currentUser?.name || "Unknown",
             expiryDate: fields.expiryDate || "",
@@ -3314,4 +3465,5 @@ setInterval(() => {
   processDueFollowups().catch((error) => console.error("[followups] processing error:", error.message));
 }, 60_000);
 
+await initAppStateStore();
 startServer();

@@ -220,11 +220,17 @@ function applyRoleGating() {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const API_BASE_URL = String(window.ASJ_ATS_API_BASE_URL || "").replace(/\/+$/, "");
+
+function apiUrl(path) {
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
 
 async function api(path, options = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     headers: options.body instanceof FormData ? {} : { "Content-Type": "application/json" },
-    credentials: "same-origin",
+    credentials: API_BASE_URL ? "include" : "same-origin",
     ...options
   });
   const body = await res.json();
@@ -4025,7 +4031,7 @@ function previewInboxResume(resumeId) {
         <div class="review-head">
           <h3>Parsed Text</h3>
           <div class="table-actions">
-            ${resume.resumeUrl?.startsWith("/uploads/") ? `<a class="button-link" href="${resume.resumeUrl}" target="_blank" rel="noreferrer">${isEmbeddable ? "Open File" : "Download File"}</a>` : ""}
+            ${resume.resumeUrl?.startsWith("/uploads/") ? `<a class="button-link" href="${apiUrl(resume.resumeUrl)}" target="_blank" rel="noreferrer">${isEmbeddable ? "Open File" : "Download File"}</a>` : ""}
             <button data-save-resume="${resume.id}" class="primary-mini">Save Update</button>
             <button data-delete-resume="${resume.id}" class="danger">Delete</button>
           </div>
@@ -4046,10 +4052,10 @@ async function loadResumeFilePreview(resume) {
   const frame = $("#resumeFileFrame");
   if (!frame) return;
   try {
-    const response = await fetch(resume.resumeUrl, { method: "HEAD" });
+    const response = await fetch(apiUrl(resume.resumeUrl), { method: "HEAD", credentials: API_BASE_URL ? "include" : "same-origin" });
     if (!response.ok) throw new Error(`File not available (HTTP ${response.status})`);
     if (!$("#resumeFileFrame") || $("#candidatePreviewMeta").textContent.indexOf(resume.fileName || "Resume") === -1) return; // modal moved on
-    frame.innerHTML = `<iframe src="${resume.resumeUrl}" title="Resume file preview"></iframe>`;
+    frame.innerHTML = `<iframe src="${apiUrl(resume.resumeUrl)}" title="Resume file preview"></iframe>`;
   } catch (error) {
     if (!$("#resumeFileFrame")) return;
     frame.innerHTML = `
