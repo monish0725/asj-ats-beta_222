@@ -7,7 +7,9 @@
     "dev": "node backend/server.js",
     "start": "node backend/server.js",
     "migrate": "node backend/database/migrate.js",
-    "migrate:undo": "node backend/database/migrate.js down"
+    "migrate:undo": "node backend/database/migrate.js down",
+    "vercel-build": "node scripts/write-public-config.js",
+    "build": "node scripts/write-public-config.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
