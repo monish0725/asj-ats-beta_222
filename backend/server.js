@@ -139,30 +139,64 @@ mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // Allowed browser origins for API/auth handlers. These endpoints authenticate with
 // an httpOnly session cookie, so production should set CORS_ORIGIN to the Vercel
-// frontend origin. Multiple origins can be comma-separated.
-const ALLOWED_ORIGINS = String(process.env.CORS_ORIGIN || "")
+// frontend origin. Multiple origins can be comma-separated. Railway deployments
+// also expose the frontend from the same service host, so include that public host
+// automatically when Railway provides it.
+function normalizeOrigin(origin) {
+  if (!origin) return "";
+  try {
+    return new URL(origin).origin;
+  } catch {
+    return String(origin).replace(/\/+$/, "");
+  }
+}
+
+const ALLOWED_ORIGINS = [
+  process.env.CORS_ORIGIN,
+  process.env.FRONTEND_URL,
+  process.env.PUBLIC_URL,
+  process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : ""
+]
+  .join(",")
   .split(",")
-  .map((origin) => origin.trim())
+  .map((origin) => normalizeOrigin(origin.trim()))
   .filter(Boolean);
 
+function requestHost(req) {
+  return String(req?.headers?.["x-forwarded-host"] || req?.headers?.host || "").split(",")[0].trim();
+}
+
+function isSameRequestOrigin(req, origin) {
+  if (!origin) return false;
+  try {
+    return new URL(origin).host === requestHost(req);
+  } catch {
+    return false;
+  }
+}
+
 function resolveAllowedOrigin(req) {
-  const origin = req?.headers?.origin;
+  const origin = normalizeOrigin(req?.headers?.origin);
   if (!origin) return "";
   if (!ALLOWED_ORIGINS.length) return origin; // no explicit allowlist configured (e.g. local dev)
-  return ALLOWED_ORIGINS.includes(origin) ? origin : "";
+  return ALLOWED_ORIGINS.includes(origin) || isSameRequestOrigin(req, origin) ? origin : "";
 }
 
 const authApp = express();
-authApp.use(cors({
-  origin(origin, callback) {
-    if (!origin || !ALLOWED_ORIGINS.length || ALLOWED_ORIGINS.includes(origin)) {
-      callback(null, true);
-      return;
-    }
-    callback(new Error("Origin not allowed by CORS"));
-  },
-  credentials: true
-}));
+const TRUST_PROXY_HOPS = Number(process.env.TRUST_PROXY_HOPS || 1);
+authApp.set("trust proxy", TRUST_PROXY_HOPS);
+authApp.use((req, res, next) => {
+  cors({
+    origin(origin, callback) {
+      if (!origin || !ALLOWED_ORIGINS.length || ALLOWED_ORIGINS.includes(origin) || isSameRequestOrigin(req, origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Origin not allowed by CORS"));
+    },
+    credentials: true
+  })(req, res, next);
+});
 authApp.use(cookieParser());
 authApp.use(express.json({ limit: "2mb" }));
 authApp.use("/auth", authRoutes);
@@ -206,8 +240,13 @@ function parseCookieHeader(header) {
   return out;
 }
 
+function bearerToken(req) {
+  const match = String(req.headers.authorization || "").match(/^Bearer\s+(.+)$/i);
+  return match?.[1] || "";
+}
+
 async function authenticateApiRequest(req) {
-  const token = parseCookieHeader(req.headers.cookie)[AUTH_COOKIE_NAME];
+  const token = parseCookieHeader(req.headers.cookie)[AUTH_COOKIE_NAME] || bearerToken(req);
   if (!token) return null;
   let payload;
   try {

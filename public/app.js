@@ -178,8 +178,18 @@ function loadSession() {
   }
 }
 
-function saveSession(user) {
-  sessionStorage.setItem("asjAtsSession", JSON.stringify(user));
+function saveSession(user, token = getSessionToken()) {
+  sessionStorage.setItem("asjAtsSession", JSON.stringify({ user, token }));
+}
+
+function getSessionToken() {
+  try {
+    const raw = sessionStorage.getItem("asjAtsSession");
+    const session = raw ? JSON.parse(raw) : null;
+    return session?.token || "";
+  } catch {
+    return "";
+  }
 }
 
 function clearSession() {
@@ -228,10 +238,16 @@ function apiUrl(path) {
 }
 
 async function api(path, options = {}) {
+  const token = getSessionToken();
+  const headers = {
+    ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {})
+  };
   const res = await fetch(apiUrl(path), {
-    headers: options.body instanceof FormData ? {} : { "Content-Type": "application/json" },
     credentials: API_BASE_URL ? "include" : "same-origin",
-    ...options
+    ...options,
+    headers
   });
   const body = await res.json();
   if (res.status === 401 && path !== "/auth/me") {
@@ -4897,8 +4913,9 @@ function applyCurrentUserToChip() {
   if ($("#menuUserEmail")) $("#menuUserEmail").textContent = state.currentUser.email || "";
 }
 
-async function startApp(user) {
+async function startApp(user, token = getSessionToken()) {
   state.currentUser = user;
+  saveSession(user, token);
   applyCurrentUserToChip();
   $("#appShell").hidden = false;
   $("#loginScreen").hidden = true;
@@ -5081,7 +5098,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
         body: JSON.stringify({ email, name, password, role })
       });
       resetLoginStep();
-      await startApp(result.user);
+      await startApp(result.user, result.token);
       return;
     }
 
@@ -5091,7 +5108,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
       body: JSON.stringify({ email, password })
     });
     resetLoginStep();
-    await startApp(result.user);
+    await startApp(result.user, result.token);
   } catch (error) {
     setLoginError(friendlyLoginError(error));
   } finally {

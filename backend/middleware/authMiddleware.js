@@ -1,6 +1,11 @@
 import { verifyToken, AUTH_COOKIE_NAME } from "../utils/jwt.js";
 import { findUserById } from "../models/userModel.js";
 
+function bearerToken(req) {
+  const match = String(req.headers.authorization || "").match(/^Bearer\s+(.+)$/i);
+  return match?.[1] || "";
+}
+
 /**
  * Requires a valid JWT cookie. On success, attaches the current user (freshly loaded from
  * the database, not just trusted from the token payload) to req.user.
@@ -11,7 +16,7 @@ import { findUserById } from "../models/userModel.js";
  */
 export async function requireAuth(req, res, next) {
   try {
-    const token = req.cookies?.[AUTH_COOKIE_NAME];
+    const token = req.cookies?.[AUTH_COOKIE_NAME] || bearerToken(req);
     if (!token) {
       return res.status(401).json({ error: "Not authenticated." });
     }

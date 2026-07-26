@@ -27,11 +27,14 @@ async function startSession(req, res, user) {
   res.cookie(AUTH_COOKIE_NAME, token, authCookieOptions());
 
   return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    department: user.department
+    token,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      department: user.department
+    }
   };
 }
 
@@ -105,8 +108,8 @@ export async function setPasswordHandler(req, res, next) {
     const passwordHash = await hashPassword(password);
     await setPassword(user.id, passwordHash);
 
-    const sessionUser = await startSession(req, res, user);
-    res.json({ message: "Password created. You're signed in.", user: sessionUser });
+    const session = await startSession(req, res, user);
+    res.json({ message: "Password created. You're signed in.", ...session });
   } catch (error) {
     next(error);
   }
@@ -138,8 +141,8 @@ export async function login(req, res, next) {
       return res.status(401).json({ error: "Incorrect email or password." });
     }
 
-    const sessionUser = await startSession(req, res, user);
-    res.json({ message: "Signed in successfully.", user: sessionUser });
+    const session = await startSession(req, res, user);
+    res.json({ message: "Signed in successfully.", ...session });
   } catch (error) {
     next(error);
   }
