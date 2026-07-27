@@ -476,7 +476,7 @@ function ensureBetaCollections(db) {
     candidate.complianceDocuments ||= [];
     candidate.tags ||= [];
     if (candidate.openToWork !== undefined) candidate.openToWork = Boolean(candidate.openToWork);
-    candidate.hotList = Boolean(candidate.hotList || candidate.openToWork);
+    if (candidate.hotList === undefined) candidate.hotList = Boolean(candidate.openToWork);
     candidate.availability ||= "";
     candidate.currentCompany ||= "";
     candidate.employmentStatus ||= "";

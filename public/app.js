@@ -1091,7 +1091,8 @@ function inferOpenToWork(candidate, resume) {
 }
 
 function isHotCandidate(candidate) {
-  return Boolean(candidate?.hotList || inferOpenToWork(candidate, null));
+  if (typeof candidate?.hotList === "boolean") return candidate.hotList;
+  return inferOpenToWork(candidate, null);
 }
 
 function getCandidateMatchScore(candidateId) {
@@ -4647,6 +4648,12 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const availableToggle = event.target.closest("#candidateEditOpenToWork");
+  if (availableToggle && availableToggle.checked) {
+    const hotToggle = $("#candidateEditHotList");
+    if (hotToggle) hotToggle.checked = true;
+  }
+
   const resumeSelectAll = event.target.closest("#resumeTableSelectAll");
   if (resumeSelectAll) {
     state.data.websiteResumes.forEach((resume) => {
