@@ -250,7 +250,8 @@ async function api(path, options = {}) {
     headers
   });
   const body = await res.json();
-  if (res.status === 401 && path !== "/auth/me") {
+  const isAuthFormRequest = String(path).startsWith("/auth/");
+  if (res.status === 401 && !isAuthFormRequest) {
     // Session expired or was revoked mid-use (e.g. an admin disabled the account, or the
     // JWT expired). Every /api/* route now requires auth, so this can happen on any call --
     // send the user back to login instead of leaving the app stuck on a half-broken screen.
