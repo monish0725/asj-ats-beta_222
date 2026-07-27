@@ -1550,6 +1550,11 @@ button.compact-button {
   background: var(--soft);
   font-size: 13px;
 }
+.hot-badge {
+  color: #9a3412;
+  background: #ffedd5;
+  border-color: #fed7aa;
+}
 .compact-cards {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }

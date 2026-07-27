@@ -475,6 +475,12 @@ function ensureBetaCollections(db) {
   for (const candidate of db.candidates || []) {
     candidate.complianceDocuments ||= [];
     candidate.tags ||= [];
+    if (candidate.openToWork !== undefined) candidate.openToWork = Boolean(candidate.openToWork);
+    candidate.hotList = Boolean(candidate.hotList || candidate.openToWork);
+    candidate.availability ||= "";
+    candidate.currentCompany ||= "";
+    candidate.employmentStatus ||= "";
+    candidate.noticePeriod ||= "";
   }
   return db;
 }
@@ -3007,7 +3013,13 @@ async function handleRequest(req, res) {
         const body = await readJson(req);
         const app = db.applications.find((item) => item.id === appId);
         if (!app) return json(res, 404, { error: "Application not found" });
-        if (STAGES.includes(body.stage)) app.stage = body.stage;
+        if (STAGES.includes(body.stage)) {
+          app.stage = body.stage;
+          if (body.decision === undefined) {
+            delete app.decision;
+            delete app.decidedAt;
+          }
+        }
         if (["Selected", "Rejected"].includes(body.decision)) {
           app.stage = "Final Decision";
           app.decision = body.decision;
@@ -3129,6 +3141,11 @@ async function handleRequest(req, res) {
         if (body.experienceYears !== undefined) {
           const years = Number(body.experienceYears);
           if (!Number.isNaN(years) && years >= 0) candidate.experienceYears = years;
+        }
+        if (body.openToWork !== undefined) candidate.openToWork = Boolean(body.openToWork);
+        if (body.hotList !== undefined) candidate.hotList = Boolean(body.hotList);
+        for (const field of ["availability", "currentCompany", "employmentStatus", "noticePeriod"]) {
+          if (body[field] !== undefined) candidate[field] = String(body[field] || "").trim().slice(0, 180);
         }
         if (body.status !== undefined) candidate.status = String(body.status).trim();
         if (body.tags !== undefined) {

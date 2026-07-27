@@ -19,7 +19,7 @@ const state = {
   atsSortBy: "",
   atsMissingKeywordsFilter: false,
   atsQualityFilter: "",
-  candidateFilters: { search: "", job: "", stage: "", experience: "", openToWork: "" },
+  candidateFilters: { search: "", job: "", stage: "", experience: "", openToWork: "", hotList: "" },
   complianceFilters: { search: "", status: "", visa: "", clearance: "", expiry: "" },
   notificationReadIds: new Set(),
   notificationsData: [],
@@ -1090,6 +1090,10 @@ function inferOpenToWork(candidate, resume) {
   return /open to work|immediate joiner|available immediately|actively looking|seeking/i.test(text);
 }
 
+function isHotCandidate(candidate) {
+  return Boolean(candidate?.hotList || inferOpenToWork(candidate, null));
+}
+
 function getCandidateMatchScore(candidateId) {
   if (!candidateId) return 0;
   const appScore = state.data.applications
@@ -1167,6 +1171,7 @@ function renderCandidates() {
             ${sortableTh("match", "Match %")}
             ${sortableTh("stage", "Pipeline Stage")}
             <th>Open To Work</th>
+            <th>Hot List</th>
             ${sortableTh("updated", "Last Activity")}
             <th class="actions-col">Actions</th>
           </tr>
@@ -1176,6 +1181,7 @@ function renderCandidates() {
     const bestMatch = candidateBestMatch(candidate);
     const stage = candidatePipelineStage(candidate);
     const openToWork = inferOpenToWork(candidate, null);
+    const hot = isHotCandidate(candidate);
     const gaps = candidateSkillGaps(candidate);
     return `
           <tr class="${state.selectedCandidates.has(candidate.id) ? "selected-row" : ""}">
@@ -1189,6 +1195,7 @@ function renderCandidates() {
             <td><strong class="match-score ${matchScoreClass(bestMatch.score)}">${bestMatch.score || 0}%</strong></td>
             <td><span class="badge">${escapeHtml(stageLabels[stage] || stage)}</span>${gaps ? `<div class="muted table-subline">Gaps: ${escapeHtml(gaps)}</div>` : ""}</td>
             <td>${openToWork ? `<span class="open-work-badge open"><span></span>Open</span>` : `<span class="open-work-badge closed"><span></span>Closed</span>`}</td>
+            <td>${hot ? `<span class="badge hot-badge">Hot</span>` : `<span class="muted">—</span>`}</td>
             <td>${formatDate(candidate.updatedAt || candidate.createdAt)}</td>
             <td>
         <div class="table-actions">
@@ -1236,6 +1243,7 @@ function renderCandidateFilterOptions() {
   $("#candidateStageFilter").value = state.candidateFilters.stage;
   $("#candidateExperienceFilter").value = state.candidateFilters.experience;
   $("#candidateOpenFilter").value = state.candidateFilters.openToWork;
+  $("#candidateHotFilter").value = state.candidateFilters.hotList;
 }
 
 function sortableTh(key, label) {
@@ -1342,9 +1350,11 @@ function applyCandidateFilters(candidates) {
       const stageOk = !filters.stage || apps.some((app) => normalizeStageName(app.stage) === filters.stage);
       const experienceOk = !experienceFilter || Number(candidate.experienceYears || 0) >= experienceFilter;
       const open = inferOpenToWork(candidate, null);
+      const hot = isHotCandidate(candidate);
       const openOk = !filters.openToWork || (filters.openToWork === "yes" ? open : !open);
+      const hotOk = !filters.hotList || (filters.hotList === "yes" ? hot : !hot);
       const booleanOk = !state.booleanQuery.trim() || result?.matched;
-      return searchOk && jobOk && stageOk && experienceOk && openOk && booleanOk;
+      return searchOk && jobOk && stageOk && experienceOk && openOk && hotOk && booleanOk;
     })
     .sort((a, b) => (b.result?.score || 0) - (a.result?.score || 0))
     .map(({ candidate }) => candidate);
@@ -1574,7 +1584,7 @@ function appCard(app) {
       <div class="stage-actions">
         ${idx > 0 ? `<button data-move="${app.id}" data-stage="${pipelineStages[idx - 1]}" data-role-restricted="pipeline">Back</button>` : ""}
         ${idx < pipelineStages.length - 1 ? `<button data-move="${app.id}" data-stage="${pipelineStages[idx + 1]}" data-role-restricted="pipeline">Move to ${stageLabels[pipelineStages[idx + 1]] || pipelineStages[idx + 1]}</button>` : ""}
-        ${isFinal ? `<button class="selected-action" data-decision="${app.id}" data-result="Selected" data-role-restricted="pipeline">Selected</button><button class="rejected-action" data-decision="${app.id}" data-result="Rejected" data-role-restricted="pipeline">Rejected</button>` : ""}
+        ${isFinal ? `<button class="selected-action ${app.decision === "Selected" ? "active" : ""}" data-decision="${app.id}" data-result="Selected" data-role-restricted="pipeline">Mark Selected</button><button class="rejected-action ${app.decision === "Rejected" ? "active" : ""}" data-decision="${app.id}" data-result="Rejected" data-role-restricted="pipeline">Mark Rejected</button>` : ""}
       </div>
     </article>
   `;
@@ -3953,7 +3963,12 @@ function previewCandidate(candidateId) {
           <div><span>Experience</span><strong>${candidate.experienceYears || 0} yrs</strong></div>
           <div><span>Best Match</span><strong class="${matchScoreClass(bestMatch.score)}">${bestMatch.score || 0}%</strong></div>
           <div><span>Status</span><strong>${inferOpenToWork(candidate, null) ? "Open To Work" : "Not listed"}</strong></div>
+          <div><span>Hot List</span><strong>${isHotCandidate(candidate) ? "Hot" : "No"}</strong></div>
           <div><span>Contact</span><strong>${escapeHtml(candidate.email || "No email")}</strong></div>
+          <div><span>Current Company</span><strong>${escapeHtml(candidate.currentCompany || "Not listed")}</strong></div>
+          <div><span>Employment</span><strong>${escapeHtml(candidate.employmentStatus || "Not listed")}</strong></div>
+          <div><span>Notice Period</span><strong>${escapeHtml(candidate.noticePeriod || "Not listed")}</strong></div>
+          <div><span>Availability</span><strong>${escapeHtml(candidate.availability || "Not listed")}</strong></div>
         </div>
       </section>
       <section class="ats-analysis-tab">
@@ -4001,6 +4016,22 @@ function previewCandidate(candidateId) {
                 ${["active", "on_hold", "placed", "do_not_contact"].map((value) => `<option value="${value}" ${candidate.status === value ? "selected" : ""}>${value.replace(/_/g, " ")}</option>`).join("")}
               </select>
             </label>
+            <label><input id="candidateEditOpenToWork" type="checkbox" ${inferOpenToWork(candidate, null) ? "checked" : ""} /> Available / ready to apply</label>
+            <label><input id="candidateEditHotList" type="checkbox" ${isHotCandidate(candidate) ? "checked" : ""} /> Mark as Hot List</label>
+            <label>Current Company
+              <input id="candidateEditCurrentCompany" type="text" value="${escapeHtml(candidate.currentCompany || "")}" placeholder="e.g. Infosys, ASJ client, Freelance" />
+            </label>
+            <label>Employment Status
+              <select id="candidateEditEmploymentStatus">
+                ${["", "Available", "Currently working", "Serving notice", "Contract", "Not looking"].map((value) => `<option value="${value}" ${String(candidate.employmentStatus || "") === value ? "selected" : ""}>${value || "Not listed"}</option>`).join("")}
+              </select>
+            </label>
+            <label>Notice Period
+              <input id="candidateEditNoticePeriod" type="text" value="${escapeHtml(candidate.noticePeriod || "")}" placeholder="e.g. Immediate, 15 days, 30 days" />
+            </label>
+            <label>Availability Notes
+              <input id="candidateEditAvailability" type="text" value="${escapeHtml(candidate.availability || "")}" placeholder="e.g. Ready to apply, remote only, after offer" />
+            </label>
             <label>Tags <span class="muted">(comma separated)</span>
               <input id="candidateEditTags" type="text" value="${escapeHtml((candidate.tags || []).join(", "))}" placeholder="e.g. Referral, Senior, Remote OK" />
             </label>
@@ -4012,6 +4043,9 @@ function previewCandidate(candidateId) {
         ` : `
           <div class="profile-grid">
             <div><span>Status</span><strong>${escapeHtml((candidate.status || "active").replace(/_/g, " "))}</strong></div>
+            <div><span>Hot List</span><strong>${isHotCandidate(candidate) ? "Hot" : "No"}</strong></div>
+            <div><span>Current Company</span><strong>${escapeHtml(candidate.currentCompany || "Not listed")}</strong></div>
+            <div><span>Employment</span><strong>${escapeHtml(candidate.employmentStatus || "Not listed")}</strong></div>
             <div><span>Tags</span><strong>${escapeHtml((candidate.tags || []).join(", ") || "None")}</strong></div>
           </div>
           <p>${escapeHtml(candidate.notes || "No notes yet.")}</p>
@@ -4102,6 +4136,12 @@ async function saveCandidateEdits(candidateId) {
   const button = $(`[data-save-candidate="${candidateId}"]`);
   const body = {
     status: $("#candidateEditStatus")?.value,
+    openToWork: Boolean($("#candidateEditOpenToWork")?.checked),
+    hotList: Boolean($("#candidateEditHotList")?.checked),
+    currentCompany: $("#candidateEditCurrentCompany")?.value || "",
+    employmentStatus: $("#candidateEditEmploymentStatus")?.value || "",
+    noticePeriod: $("#candidateEditNoticePeriod")?.value || "",
+    availability: $("#candidateEditAvailability")?.value || "",
     tags: $("#candidateEditTags")?.value || "",
     notes: $("#candidateEditNotes")?.value || ""
   };
@@ -4423,13 +4463,14 @@ $("#candidateSearch")?.addEventListener("input", (event) => {
   state.candidatePage = 1;
   renderCandidates();
 });
-["#candidateJobFilter", "#candidateStageFilter", "#candidateExperienceFilter", "#candidateOpenFilter"].forEach((selector) => {
+["#candidateJobFilter", "#candidateStageFilter", "#candidateExperienceFilter", "#candidateOpenFilter", "#candidateHotFilter"].forEach((selector) => {
   $(selector)?.addEventListener("change", (event) => {
     const keys = {
       "#candidateJobFilter": "job",
       "#candidateStageFilter": "stage",
       "#candidateExperienceFilter": "experience",
-      "#candidateOpenFilter": "openToWork"
+      "#candidateOpenFilter": "openToWork",
+      "#candidateHotFilter": "hotList"
     };
     state.candidateFilters[keys[selector]] = event.target.value;
     state.candidatePage = 1;
