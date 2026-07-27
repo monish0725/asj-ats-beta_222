@@ -2345,6 +2345,41 @@ pre {
 .candidate-table td:nth-child(9) { width: 145px; }
 .candidate-table th:nth-child(10),
 .candidate-table td:nth-child(10) { width: 110px; }
+.candidate-table {
+  min-width: 1420px;
+}
+.candidate-table th {
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.candidate-table .sort-header {
+  font-size: inherit;
+  letter-spacing: inherit;
+}
+.candidate-table th:nth-child(8),
+.candidate-table td:nth-child(8) { width: 135px; }
+.candidate-table th:nth-child(9),
+.candidate-table td:nth-child(9) { width: 105px; }
+.candidate-table th:nth-child(10),
+.candidate-table td:nth-child(10) { width: 150px; }
+.candidate-table th:nth-child(11),
+.candidate-table td:nth-child(11) {
+  width: 132px;
+  min-width: 132px;
+}
+.candidate-table .actions-col,
+.candidate-table th:last-child,
+.candidate-table td:last-child {
+  width: 132px;
+  min-width: 132px;
+  text-align: center;
+}
+.candidate-table .table-actions {
+  justify-content: center;
+  gap: 8px;
+}
 .resume-table th:nth-child(1),
 .resume-table td:nth-child(1) { width: 42px; }
 .resume-table th:nth-child(2),
