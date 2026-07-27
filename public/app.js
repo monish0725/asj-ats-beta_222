@@ -237,11 +237,15 @@ function apiUrl(path) {
   return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-async function api(path, options = {}) {
+function authHeaders() {
   const token = getSessionToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+async function api(path, options = {}) {
   const headers = {
     ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...authHeaders(),
     ...(options.headers || {})
   };
   const res = await fetch(apiUrl(path), {
@@ -4096,18 +4100,24 @@ function previewInboxResume(resumeId) {
   if (canTryEmbed) loadResumeFilePreview(resume);
 }
 
-// Iframes don't reliably fire an error event for a failed/404 file load (behavior
-// differs across browsers), which is how a broken preview ends up showing the raw
-// browser "refused to connect" page inside the modal instead of a helpful message.
-// Checking reachability first with a HEAD request avoids that entirely.
+// Fetch protected uploads with the same auth headers as API calls, then render a local
+// blob URL. This keeps previews working even when cross-site cookies are unavailable.
 async function loadResumeFilePreview(resume) {
   const frame = $("#resumeFileFrame");
   if (!frame) return;
   try {
-    const response = await fetch(apiUrl(resume.resumeUrl), { method: "HEAD", credentials: API_BASE_URL ? "include" : "same-origin" });
+    const response = await fetch(apiUrl(resume.resumeUrl), {
+      method: "GET",
+      credentials: API_BASE_URL ? "include" : "same-origin",
+      headers: authHeaders()
+    });
     if (!response.ok) throw new Error(`File not available (HTTP ${response.status})`);
     if (!$("#resumeFileFrame") || $("#candidatePreviewMeta").textContent.indexOf(resume.fileName || "Resume") === -1) return; // modal moved on
-    frame.innerHTML = `<iframe src="${apiUrl(resume.resumeUrl)}" title="Resume file preview"></iframe>`;
+    const blob = await response.blob();
+    if (frame.dataset.previewUrl) URL.revokeObjectURL(frame.dataset.previewUrl);
+    const blobUrl = URL.createObjectURL(blob);
+    frame.dataset.previewUrl = blobUrl;
+    frame.innerHTML = `<iframe src="${blobUrl}" title="Resume file preview"></iframe>`;
   } catch (error) {
     if (!$("#resumeFileFrame")) return;
     frame.innerHTML = `
